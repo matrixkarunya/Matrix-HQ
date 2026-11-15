@@ -1,0 +1,152 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+    function myEmail() {
+      return request.auth.token.email.lower();
+    }
+    function myDoc() {
+      return get(/databases/$(database)/documents/users/$(myEmail()));
+    }
+    function isSuperadmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(myEmail()))
+        && myDoc().data.role == "superadmin";
+    }
+    function isActiveUser() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(myEmail()))
+        && myDoc().data.get('active', true) == true;
+    }
+    function isStaff() {
+      return isActiveUser() && myDoc().data.role in ['superadmin', 'admin'];
+    }
+
+    function eventDocument(eventId) {
+      return get(/databases/$(database)/documents/events/$(eventId));
+    }
+
+    // superadmin, or an ACTIVE ADMIN who created the event
+    function ownsEvent(eventId) {
+      return isSuperadmin()
+        || (isStaff()
+          && eventDocument(eventId).data.get('createdBy', '') == myEmail());
+    }
+
+    function assignedTask(eventId, taskId, memberEmail) {
+      return exists(/databases/$(database)/documents/events/$(eventId)/tasks/$(taskId))
+        && get(/databases/$(database)/documents/events/$(eventId)/tasks/$(taskId)).data.assignees.hasAny([memberEmail]);
+    }
+
+    match /users/{email} {
+      allow read: if signedIn() && (myEmail() == email.lower() || isStaff());
+      allow create: if isSuperadmin() && request.resource.data.role in ['admin', 'member', 'guest'];
+      allow delete: if isSuperadmin();
+      allow update: if
+        (isSuperadmin() && myEmail() != email.lower()
+          && resource.data.role != 'superadmin'
+          && request.resource.data.role in ['admin', 'member', 'guest'])
+        ||
+        (signedIn() && myEmail() == email.lower()
+          && resource.data.get('active', true) == true
+          && !request.resource.data.diff(resource.data).affectedKeys()
+               .hasAny(['role', 'email', 'active', 'inactiveAt', 'inactiveBy', 'reactivatedAt', 'designation']));
+    }
+
+    match /userPhotos/{email} {
+      allow read: if isActiveUser() && (myEmail() == email.lower() || isStaff());
+      allow create, update: if isActiveUser()
+        && myEmail() == email.lower()
+        && request.resource.data.keys().hasOnly(['url', 'fileId', 'updatedAt'])
+        && request.resource.data.url is string
+        && request.resource.data.url.size() < 600
+        && request.resource.data.url.matches('^https://ik\\.imagekit\\.io/.*')
+        && request.resource.data.fileId is string
+        && request.resource.data.fileId.size() < 100;
+      allow delete: if isActiveUser() && myEmail() == email.lower();
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isSuperadmin();
+      allow create: if isSuperadmin()
+        && request.resource.data.actorEmail == myEmail()
+        && request.resource.data.timestamp == request.time;
+      allow update, delete: if false;
+    }
+
+    match /events/{eventId} {
+      allow read: if isActiveUser();
+      allow create: if isStaff()
+        && request.resource.data.createdBy == myEmail();
+      // any staff can edit (attendance, completed, etc.), but only the superadmin can change the owner
+      allow update: if isStaff()
+        && (isSuperadmin()
+            || !request.resource.data.diff(resource.data).affectedKeys()
+                 .hasAny(['createdBy', 'createdByName']));
+      allow delete: if isStaff();
+
+      match /tasks/{taskId} {
+        allow read: if isStaff()
+          || (isActiveUser() && myEmail() in resource.data.assignees);
+        allow create, update, delete: if isStaff();
+      }
+
+      match /attendance/{memberEmail} {
+        allow read: if isStaff() || (isActiveUser() && myEmail() == memberEmail.lower());
+        allow create, update: if isStaff()
+          && request.resource.data.present is bool
+          && request.resource.data.markedBy == myEmail();
+        allow delete: if isStaff();
+      }
+    }
+
+    match /completionRequests/{requestId} {
+      allow read: if isSuperadmin()
+        || (isActiveUser() && resource.data.requestedBy == myEmail())
+        || (isActiveUser() && myDoc().data.role == 'admin' && ownsEvent(resource.data.eventId));
+
+      allow create: if isActiveUser()
+        && myDoc().data.role == 'member'
+        && request.resource.data.requestedBy == myEmail()
+        && request.resource.data.status == 'pending'
+        && request.resource.data.eventId is string
+        && request.resource.data.todoId is string
+        && assignedTask(request.resource.data.eventId, request.resource.data.todoId, myEmail())
+        && !exists(/databases/$(database)/documents/completionRequests/$(requestId));
+
+      allow update: if isActiveUser()
+        && (
+          (
+            myDoc().data.role == 'member'
+            && resource.data.requestedBy == myEmail()
+            && resource.data.status == 'rejected'
+            && request.resource.data.status == 'pending'
+            && request.resource.data.requestedBy == resource.data.requestedBy
+            && request.resource.data.eventId == resource.data.eventId
+            && request.resource.data.todoId == resource.data.todoId
+            && request.resource.data.get('subtaskId', '') == resource.data.get('subtaskId', '')
+            && assignedTask(request.resource.data.eventId, request.resource.data.todoId, myEmail())
+          )
+          || (
+            ownsEvent(resource.data.eventId)
+            && resource.data.status == 'pending'
+            && request.resource.data.status in ['approved', 'rejected']
+            && request.resource.data.reviewedBy == myEmail()
+            && request.resource.data.reviewedAt == request.time
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                 .hasAny(['requestedBy', 'requestedByName', 'eventId', 'todoId', 'subtaskId'])
+            && (request.resource.data.status == 'rejected'
+                || (request.resource.data.timeEntries is list
+                    && request.resource.data.timeEntries.size() >= 1
+                    && request.resource.data.timeEntries.size() <= 10))
+          )
+        );
+
+      // lets event deletion remove the event's requests (superadmin or the creating admin)
+      allow delete: if ownsEvent(resource.data.eventId);
+    }
+  }
+}

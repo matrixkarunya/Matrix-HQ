@@ -1,0 +1,34 @@
+import "./globals.css";
+import { AuthProvider } from "@/context/AuthContext";
+import MeshDriftBackground from "@/components/MeshDriftBackground";
+
+export const metadata = {
+  title: "Matrix HQ",
+  description: "Official Matrix Board Management System",
+  applicationName: "Matrix Todo",
+
+  appleWebApp: {
+    capable: true,
+    title: "Matrix Todo",
+    statusBarStyle: "default",
+  },
+};
+export const viewport = {
+  themeColor: "#ffffff",
+  width: "device-width",
+  initialScale: 1,
+};
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en">
+      <body className="min-h-screen bg-[#05070F] text-white antialiased">
+        <MeshDriftBackground dim={0.35} />
+
+        <div className="relative z-10 min-h-screen">
+          <AuthProvider>{children}</AuthProvider>
+        </div>
+      </body>
+    </html>
+  );
+}
