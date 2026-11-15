@@ -2,7 +2,6 @@ import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
 import MeshDriftBackground from "@/components/MeshDriftBackground";
 import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
-import AppSplash from "@/components/AppSplash";
 
 export const metadata = {
   title: "Matrix HQ",
@@ -27,7 +26,6 @@ export default function RootLayout({ children }) {
     <html lang="en">
       <body className="min-h-screen bg-[#05070F] text-white antialiased">
         <ServiceWorkerRegistration />
-        <AppSplash />
         <MeshDriftBackground dim={0.35} />
 
         <div className="relative z-10 min-h-screen">
