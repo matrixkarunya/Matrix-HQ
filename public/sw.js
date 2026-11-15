@@ -1,27 +1,49 @@
-const CACHE_NAME = "matrix-v1";
+const CACHE_NAME = "matrix-v2";
 
-self.addEventListener("install", (event) => {
+self.addEventListener("install", () => {
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+      )
+      .then(() => self.clients.claim())
+  );
 });
 
 self.addEventListener("fetch", (event) => {
-  // Do not interfere with Firebase or API requests
+  const { request } = event;
+  const url = new URL(request.url);
+
+  // Never touch Firebase / API / cross-origin requests
   if (
-    event.request.method !== "GET" ||
-    event.request.url.includes("firestore.googleapis.com") ||
-    event.request.url.includes("googleapis.com") ||
-    event.request.url.includes("firebase")
+    request.method !== "GET" ||
+    url.origin !== self.location.origin ||
+    url.pathname.startsWith("/api/")
   ) {
     return;
   }
 
-  event.respondWith(
-    fetch(event.request).catch(() => {
-      return caches.match(event.request);
-    })
-  );
+  // Cache-first for immutable static assets
+  if (url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/icons/")) {
+    event.respondWith(
+      caches.match(request).then(
+        (cached) =>
+          cached ||
+          fetch(request).then((response) => {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+            return response;
+          })
+      )
+    );
+    return;
+  }
+
+  // Everything else: network first, cache fallback
+  event.respondWith(fetch(request).catch(() => caches.match(request)));
 });
