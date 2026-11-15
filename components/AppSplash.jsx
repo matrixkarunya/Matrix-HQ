@@ -33,7 +33,7 @@ export default function AppSplash() {
         fade ? "opacity-0" : "opacity-100"
       }`}
     >
-      <img src="/icons/icon-512.png" alt="" className="w-28" />
+        <img src="/icons/icon-512.png" alt="" className="w-44 sm:w-56" />
     </div>
   );
 }
