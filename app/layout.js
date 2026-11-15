@@ -1,6 +1,7 @@
 import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
 import MeshDriftBackground from "@/components/MeshDriftBackground";
+import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
 
 export const metadata = {
   title: "Matrix HQ",
@@ -13,6 +14,7 @@ export const metadata = {
     statusBarStyle: "default",
   },
 };
+
 export const viewport = {
   themeColor: "#ffffff",
   width: "device-width",
@@ -23,6 +25,7 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body className="min-h-screen bg-[#05070F] text-white antialiased">
+        <ServiceWorkerRegistration />
         <MeshDriftBackground dim={0.35} />
 
         <div className="relative z-10 min-h-screen">
