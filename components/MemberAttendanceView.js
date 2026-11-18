@@ -25,16 +25,16 @@ function timeRange(row) {
 function AttendanceContent() {
   const { role } = useAuth();
   const {
-    loading,
-    error,
-    eventSessionTotals,
-    meetingSessionMinutes,
-    allSessionTotalMinutes,
-    rows,
-    combinedAttendancePercentage,
-    combinedAttendanceCount,
-    combinedAttendanceRecordedCount,
-  } = useMyHours();
+  loading,
+  error,
+  totals,
+  meetingTotalMinutes,
+  combinedTotals,
+  rows,
+  combinedAttendancePercentage,
+  combinedAttendanceCount,
+  combinedAttendanceRecordedCount,
+} = useMyHours();
   const backHref = role === "admin" ? "/admin" : "/member";
 
   return (
@@ -62,15 +62,14 @@ function AttendanceContent() {
       ) : null}
 
       <AttendanceStatBoxes
-        workingMinutes={eventSessionTotals.workingMinutes}
-        nonWorkingMinutes={eventSessionTotals.nonWorkingMinutes}
-        meetingMinutes={meetingSessionMinutes}
-        totalMinutes={allSessionTotalMinutes}
-        attendancePercent={combinedAttendancePercentage}
-        attendanceCaption={combinedAttendancePercentage === null ? "" : `${combinedAttendanceCount} of ${combinedAttendanceRecordedCount} sessions`}
-      />
-      <p className="mt-2 text-xs text-white/40">Hours count each saved event and meeting session once; attendance percentage is based on your records.</p>
-
+  workingMinutes={totals.workingMinutes}
+  nonWorkingMinutes={totals.nonWorkingMinutes}
+  meetingMinutes={meetingTotalMinutes}
+  totalMinutes={combinedTotals.totalMinutes}
+  attendancePercent={combinedAttendancePercentage}
+  attendanceCaption={combinedAttendancePercentage === null ? "" : `${combinedAttendanceCount} of ${combinedAttendanceRecordedCount} sessions`}
+/>
+<p className="mt-2 text-xs text-white/40">Hours include the sessions you attended, your approved task hours and meetings you attended; attendance percentage is based on your records.</p>
       {loading ? (
         <div className="mt-6 space-y-3" aria-busy="true">
           {Array.from({ length: 4 }).map((_, index) => (
