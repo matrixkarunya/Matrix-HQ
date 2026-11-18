@@ -25,6 +25,7 @@ import {
 import { useAuth } from "@/context/AuthContext";
 import AttendanceStatBoxes from "@/components/AttendanceStatBoxes";
 import AttendanceStatusBadge from "@/components/AttendanceStatusBadge";
+import WorkingDayToggle from "@/components/WorkingDayToggle";
 import useUsers from "@/lib/useUsers";
 import { db } from "@/lib/firebase";
 import { formatMinutes, splitRange, toMinutes } from "@/lib/hours";
@@ -125,6 +126,7 @@ export default function EventAttendance() {
   const [modalMode, setModalMode] = useState("initial");
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
+  const [isWorkingDay, setIsWorkingDay] = useState(true);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
@@ -139,7 +141,10 @@ export default function EventAttendance() {
   const presentCount = boardMembers.filter((member) => presentByEmail[normalizeEmail(member.email)] === true).length;
   const hasSavedAttendance = Boolean(event?.attendanceSummary);
   const savedSummary = event?.attendanceSummary;
-  const savedTimeTotals = savedSummary ? splitRange(savedSummary.startTime, savedSummary.endTime) : null;
+  const savedIsWorkingDay = savedSummary?.isWorkingDay !== false;
+  const savedTimeTotals = savedSummary
+    ? splitRange(savedSummary.startTime, savedSummary.endTime, savedIsWorkingDay)
+    : null;
 
   useEffect(() => () => clearTimeout(toastTimer.current), []);
 
@@ -200,6 +205,7 @@ export default function EventAttendance() {
     setPresentByEmail(savedByEmail);
     setStartTime(event?.attendanceSummary?.startTime || "");
     setEndTime(event?.attendanceSummary?.endTime || "");
+    setIsWorkingDay(event?.attendanceSummary?.isWorkingDay !== false);
   }, [attendance, editMode, event, isStaff, staffReady]);
 
   useEffect(() => {
@@ -219,6 +225,7 @@ export default function EventAttendance() {
     setModalMode("initial");
     setStartTime(event?.attendanceSummary?.startTime || startTime || "");
     setEndTime(event?.attendanceSummary?.endTime || endTime || "");
+    setIsWorkingDay(event?.attendanceSummary ? event.attendanceSummary.isWorkingDay !== false : isWorkingDay);
     setFormError("");
     setModalOpen(true);
   }
@@ -227,6 +234,7 @@ export default function EventAttendance() {
     setModalMode("time");
     setStartTime(event?.attendanceSummary?.startTime || "");
     setEndTime(event?.attendanceSummary?.endTime || "");
+    setIsWorkingDay(event?.attendanceSummary?.isWorkingDay !== false);
     setFormError("");
     setModalOpen(true);
   }
@@ -298,6 +306,7 @@ export default function EventAttendance() {
             eventId,
             ...(summary.startTime ? { startTime: summary.startTime } : {}),
             ...(summary.endTime ? { endTime: summary.endTime } : {}),
+            isWorkingDay: summary.isWorkingDay !== false,
             markedBy: savedBy,
             markedAt: serverTimestamp(),
           };
@@ -347,13 +356,14 @@ export default function EventAttendance() {
           batch.update(doc(db, "events", eventId, "attendance", record.id), {
             startTime,
             endTime,
+            isWorkingDay,
             markedBy: memberEmail,
             markedAt: serverTimestamp(),
           });
         });
         if (index + 399 >= attendance.length) {
           batch.update(doc(db, "events", eventId), {
-            attendanceSummary: getSummaryUpdate({ startTime, endTime }),
+            attendanceSummary: getSummaryUpdate({ startTime, endTime, isWorkingDay }),
           });
         }
         await batch.commit();
@@ -393,6 +403,7 @@ export default function EventAttendance() {
         totalCount: boardMembers.length,
         startTime,
         endTime,
+        isWorkingDay,
         savedBy,
         savedAt: serverTimestamp(),
       };
@@ -409,6 +420,7 @@ export default function EventAttendance() {
             eventId,
             startTime,
             endTime,
+            isWorkingDay,
             markedBy: savedBy,
             markedAt: serverTimestamp(),
           });
@@ -434,7 +446,13 @@ export default function EventAttendance() {
 
   if (role === "member") {
     const myStatus = !myAttendance ? "Not recorded" : myAttendance.present ? "Present" : "Absent";
-    const myTotals = myAttendance ? splitRange(myAttendance.startTime, myAttendance.endTime) : null;
+    const myTotals = myAttendance
+      ? splitRange(
+          myAttendance.startTime,
+          myAttendance.endTime,
+          (myAttendance.isWorkingDay ?? event?.attendanceSummary?.isWorkingDay) !== false,
+        )
+      : null;
 
     return (
       <div className="w-full text-white">
@@ -481,7 +499,11 @@ export default function EventAttendance() {
               <>
                 <p className="mt-5 flex items-center gap-2 text-sm text-white/60">
                   <Clock className="size-4 shrink-0 text-violet-300" aria-hidden="true" />
-                  <span className="min-w-0 truncate">{myAttendance.startTime} to {myAttendance.endTime}</span>
+                  <span className="min-w-0 truncate">
+                    {myAttendance.startTime} to {myAttendance.endTime}
+                    {" · "}
+                    {(myAttendance.isWorkingDay ?? event?.attendanceSummary?.isWorkingDay) === false ? "Non-working day" : "Working day"}
+                  </span>
                 </p>
                 <div className="mt-4 grid grid-cols-3 gap-3">
                   <div className="rounded-xl border border-white/10 bg-white/5 p-3">
@@ -575,6 +597,15 @@ export default function EventAttendance() {
                 {savedSummary.startTime} to {savedSummary.endTime}
               </span>
             ) : null}
+            {savedSummary ? (
+              <span className={DATE_CHIP}>
+                <span
+                  className={`size-1.5 rounded-full ${savedIsWorkingDay ? "bg-emerald-300" : "bg-amber-300"}`}
+                  aria-hidden="true"
+                />
+                {savedIsWorkingDay ? "Working day" : "Non-working day"}
+              </span>
+            ) : null}
           </div>
         </div>
 
@@ -659,7 +690,7 @@ export default function EventAttendance() {
             <p className="text-sm text-white/40">No active board members to mark yet.</p>
           </div>
         ) : (
-                    <>
+          <>
             <div className={`hidden max-h-[60vh] overflow-auto overscroll-contain border-t border-white/10 md:block ${SCROLL}`}>
               <table className="min-w-full text-left text-sm">
                 <thead>
@@ -742,11 +773,15 @@ export default function EventAttendance() {
             <h2 id="attendance-save-title" className="mt-2 text-2xl font-semibold">{modalMode === "time" ? "Edit attendance times" : "Save attendance"}</h2>
             <p className="mt-2 text-sm text-white/60">
               {modalMode === "time"
-                ? "Update the event start and end time for every attendance record."
-                : "Confirm the event time to save attendance for all members."}
+                ? "Update the day type and the event start and end time for every attendance record."
+                : "Confirm the day type and event time to save attendance for all members."}
             </p>
 
             <form onSubmit={handleSave} noValidate>
+              <div className="mt-5">
+                <WorkingDayToggle value={isWorkingDay} onChange={setIsWorkingDay} disabled={saving} />
+              </div>
+
               <div className="mt-5 grid gap-4 sm:grid-cols-2">
                 <div>
                   <label htmlFor="attendance-start" className={LABEL}>Event start time</label>

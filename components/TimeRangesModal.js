@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
+import WorkingDayToggle from "@/components/WorkingDayToggle";
 import { formatMinutes, sumRanges, validateRanges } from "@/lib/hours";
 
 const EMPTY_RANGE = { startTime: "", endTime: "" };
@@ -28,27 +29,31 @@ export default function TimeRangesModal({
   title = "Add time spent",
   description = "Enter the time ranges.",
   initialTimeEntries = [EMPTY_RANGE],
+  initialIsWorkingDay = true,
   assignees = [],
   selectedAssignees = [],
   onClose,
   onConfirm,
   saving = false,
   showAssignees = false,
+  showWorkingDayToggle = false,
   externalError = "",
 }) {
   const idCounter = useRef(0);
   const [timeEntries, setTimeEntries] = useState(() => withIds(initialTimeEntries, idCounter));
   const [selected, setSelected] = useState(() => [...selectedAssignees]);
+  const [isWorkingDay, setIsWorkingDay] = useState(initialIsWorkingDay !== false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (!open) return;
     setTimeEntries(withIds(initialTimeEntries, idCounter));
     setSelected([...selectedAssignees]);
+    setIsWorkingDay(initialIsWorkingDay !== false);
     setError("");
   }, [open]);
 
-  const totals = useMemo(() => sumRanges(timeEntries), [timeEntries]);
+  const totals = useMemo(() => sumRanges(timeEntries, isWorkingDay), [timeEntries, isWorkingDay]);
   const validation = useMemo(() => validateRanges(timeEntries), [timeEntries]);
 
   function updateEntry(id, field, value) {
@@ -69,7 +74,11 @@ export default function TimeRangesModal({
       setError("Select at least one assignee.");
       return;
     }
-    onConfirm(timeEntries.map(({ startTime, endTime }) => ({ startTime, endTime })), selected);
+    onConfirm(
+      timeEntries.map(({ startTime, endTime }) => ({ startTime, endTime })),
+      selected,
+      isWorkingDay,
+    );
   }
 
   if (!open) return null;
@@ -89,9 +98,15 @@ export default function TimeRangesModal({
         <h2 id="time-ranges-title" className="mt-2 text-2xl font-semibold">{title}</h2>
         <p className="mt-2 text-sm text-white/60">{description}</p>
 
+        {showWorkingDayToggle ? (
+          <div className="mt-5">
+            <WorkingDayToggle value={isWorkingDay} onChange={setIsWorkingDay} disabled={saving} />
+          </div>
+        ) : null}
+
         <div className="mt-5 space-y-3">
           {timeEntries.map((entry) => {
-            const rowTotals = sumRanges([entry]);
+            const rowTotals = sumRanges([entry], isWorkingDay);
             return (
               <div
                 key={entry.id}

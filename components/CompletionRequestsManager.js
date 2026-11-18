@@ -314,7 +314,7 @@ function RequestsContent() {
     toastTimer.current = setTimeout(() => setToast(""), 2500);
   }
 
-  async function approve(request, entries) {
+  async function approve(request, entries, isWorkingDay = true) {
     const event = eventById[request.eventId];
     const task = tasksByEvent[request.eventId]?.[request.todoId];
     if (!event || !task) {
@@ -335,7 +335,14 @@ function RequestsContent() {
       })) : [];
       const nextDone = request.subtaskId ? (nextSubtasks.length > 0 && nextSubtasks.every((subtask) => subtask.done)) : true;
       const batch = writeBatch(db);
-      batch.update(doc(db, "completionRequests", request.id), { status: "approved", reviewedBy: String(user.email).toLowerCase(), reviewedByName: nameFor(users, user.email), reviewedAt: serverTimestamp(), timeEntries: cleanTimeEntries(entries) });
+      batch.update(doc(db, "completionRequests", request.id), {
+        status: "approved",
+        reviewedBy: String(user.email).toLowerCase(),
+        reviewedByName: nameFor(users, user.email),
+        reviewedAt: serverTimestamp(),
+        timeEntries: cleanTimeEntries(entries),
+        isWorkingDay: isWorkingDay !== false,
+      });
       batch.update(doc(db, "events", request.eventId, "tasks", request.todoId), {
         subtasks: nextSubtasks,
         done: nextDone,
@@ -389,8 +396,8 @@ function RequestsContent() {
   const closeApproval = useCallback(() => {
     if (!busyId) setApprovalDialog(null);
   }, [busyId]);
-  const confirmApproval = useCallback((entries) => {
-    if (approvalDialog) approve(approvalDialog, entries);
+  const confirmApproval = useCallback((entries, _selectedAssignees, isWorkingDay) => {
+    if (approvalDialog) approve(approvalDialog, entries, isWorkingDay);
   }, [approvalDialog, eventById, tasksByEvent, user, users]);
 
   return (
@@ -450,6 +457,7 @@ function RequestsContent() {
         open={Boolean(approvalDialog)}
         title="Approve request?"
         description={approvalDialog ? `Add the time spent by ${nameFor(users, approvalDialog.requestedBy)}.` : ""}
+        showWorkingDayToggle
         saving={Boolean(busyId)}
         externalError={error}
         onClose={closeApproval}
@@ -476,7 +484,8 @@ function RequestsContent() {
             {visibleRequests.map((request) => {
               const task = tasksByEvent[request.eventId]?.[request.todoId];
               const subtask = task?.subtasks?.find((item) => item.id === request.subtaskId);
-              const entryTotals = sumRanges(request.timeEntries);
+              const requestIsWorkingDay = request.isWorkingDay !== false;
+              const entryTotals = sumRanges(request.timeEntries, requestIsWorkingDay);
               const canReview = request.status === "pending" && request.requestedBy !== String(user?.email || "").toLowerCase();
               const rowBusy = busyId === request.id;
               return (
@@ -517,6 +526,7 @@ function RequestsContent() {
                             </span>
                           </p>
                           <div className="flex flex-wrap gap-1.5">
+                            <span className={PILL}>{requestIsWorkingDay ? "Working day" : "Non-working day"}</span>
                             <span className={PILL}>Working <span className="font-semibold text-white">{formatMinutes(entryTotals.workingMinutes)}</span></span>
                             <span className={PILL}>Non-working <span className="font-semibold text-white">{formatMinutes(entryTotals.nonWorkingMinutes)}</span></span>
                             <span className={PILL}>Total <span className="font-semibold text-white">{formatMinutes(entryTotals.totalMinutes)}</span></span>

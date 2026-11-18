@@ -404,7 +404,7 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
     }
   }
 
-  async function handleStaffHoursConfirm(timeEntries, selectedAssignees) {
+  async function handleStaffHoursConfirm(timeEntries, selectedAssignees, isWorkingDay = true) {
     if (!hoursTask || !eventId || !user?.email) return;
     setHoursSaving(true);
     try {
@@ -432,6 +432,7 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
           memberEmail: normalizedEmail,
           memberName: String(person?.fullName || person?.name || normalizedEmail),
           timeEntries: timeEntries.map(({ startTime, endTime }) => ({ startTime: String(startTime || ""), endTime: String(endTime || "") })),
+          isWorkingDay: isWorkingDay !== false,
           source: "staff-tick",
           loggedBy: String(user.email).trim().toLowerCase(),
           loggedAt: serverTimestamp(),
@@ -697,7 +698,7 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
           </p>
         </div>
       ) : (
-                <ul className={`${GLASS} divide-y divide-white/10 overflow-hidden`}>
+        <ul className={`${GLASS} divide-y divide-white/10 overflow-hidden`}>
           {pagedTasks.map((task) => {
             const normalized = normalizeTask(task);
             const taskDone = taskIsDone(normalized);
@@ -945,6 +946,7 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
           })}
           selectedAssignees={hoursTask.task.assignees.map((email) => String(email).trim().toLowerCase())}
           showAssignees
+          showWorkingDayToggle
           saving={hoursSaving}
           onClose={() => !hoursSaving && setHoursTask(null)}
           onConfirm={handleStaffHoursConfirm}
