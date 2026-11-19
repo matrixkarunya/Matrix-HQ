@@ -9,7 +9,8 @@ import { useAuth } from "@/context/AuthContext";
 import { ROLE_HOME } from "@/lib/config";
 import { deleteEventAndRelatedData } from "@/lib/events";
 import { db } from "@/lib/firebase";
-
+import SemesterSelect from "@/components/SemesterSelect";
+import { useSemester } from "@/context/SemesterContext";
 const PRIMARY =
   "!min-h-0 inline-flex items-center justify-center gap-2 whitespace-nowrap !rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-neutral-900 transition hover:bg-neutral-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950 disabled:cursor-not-allowed disabled:opacity-60";
 const GHOST =
@@ -59,6 +60,8 @@ function Spinner() {
 
 export default function EventsManager() {
   const { user, profile, role } = useAuth();
+  const { activeSemesterId, loading: semesterLoading } = useSemester();
+const noSemester = !semesterLoading && !activeSemesterId;
   const [modalOpen, setModalOpen] = useState(false);
   const [name, setName] = useState("");
   const [date, setDate] = useState("");
@@ -126,7 +129,10 @@ export default function EventsManager() {
 
   async function handleCreate(event) {
     event.preventDefault();
-
+    if (!activeSemesterId) {
+  setFormError("There is no active semester. Ask the superadmin to start one.");
+  return;
+}
     const trimmedName = name.trim();
 
     if (!trimmedName || trimmedName.length < 2) {
@@ -146,6 +152,7 @@ export default function EventsManager() {
       await addDoc(collection(db, "events"), {
         name: trimmedName,
         date,
+        semesterId: activeSemesterId,
         completed: false,
         completedAt: null,
         createdBy: (user?.email || "").trim().toLowerCase(),
@@ -228,7 +235,7 @@ export default function EventsManager() {
   }
 
   const createButton = (
-    <button type="button" onClick={openModal} className={`${PRIMARY} shrink-0`}>
+    <button type="button" onClick={openModal} disabled={noSemester || semesterLoading} className={`${PRIMARY} shrink-0`}>
       <Plus className="size-4" aria-hidden="true" />
       <span className="hidden sm:inline">Create event</span>
       <span className="sm:hidden">Create</span>
@@ -246,10 +253,25 @@ export default function EventsManager() {
       </Link>
 
       <header className="mb-6 mt-6 sm:mb-8">
-        <p className={EYEBROW}>Events</p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight lg:text-4xl">Manage events</h1>
-        <p className="mt-2 text-sm text-white/50">Create, edit and remove events, and open their todo and attendance.</p>
-      </header>
+  <div className="flex flex-wrap items-end justify-between gap-3">
+    <div className="min-w-0">
+      <p className={EYEBROW}>Events</p>
+      <h1 className="mt-2 text-3xl font-bold tracking-tight lg:text-4xl">Manage events</h1>
+    </div>
+    <SemesterSelect />
+  </div>
+  <p className="mt-2 text-sm text-white/50">Create, edit and remove events, and open their todo and attendance.</p>
+  {noSemester ? (
+    <p role="alert" className="mt-4 rounded-xl border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+      There is no active semester, so events can't be created yet.{" "}
+      {role === "superadmin" ? (
+        <Link href="/superadmin/semesters" className="underline underline-offset-4">Start one</Link>
+      ) : (
+        "Ask the superadmin to start one."
+      )}
+    </p>
+  ) : null}
+</header>
 
       <EventsList role={role} onEdit={openEditModal} onDelete={openDeleteModal} action={createButton} />
 

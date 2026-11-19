@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ArrowUpRight, CalendarDays, Clock3, Inbox, ShieldCheck, Users } from "lucide-react";
 import { formatMinutes } from "@/lib/hours";
 import useDashboardStats from "@/lib/useDashboardStats";
-
+import SemesterSelect from "@/components/SemesterSelect";
 const GLASS = "rounded-2xl border border-white/10 bg-white/[0.06] shadow-lg shadow-black/20 backdrop-blur-xl";
 
 const ICONS = {
@@ -90,6 +90,9 @@ function HoursCard({ stats, failed, className = "" }) {
 
   return (
     <section className={`${GLASS} p-5 sm:p-6 ${className}`} aria-label="Hours">
+      <div className="mb-3 flex justify-end">
+  <SemesterSelect />
+</div>
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-xs font-medium uppercase tracking-[.16em] text-white/50">Total hours</p>

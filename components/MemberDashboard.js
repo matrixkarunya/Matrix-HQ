@@ -16,7 +16,9 @@ import {
 } from "firebase/firestore";
 import { CalendarDays, CheckCircle2, Clock3, ListTodo, Percent, ArrowUpRight, Inbox } from "lucide-react";
 import RoleGuard from "@/components/RoleGuard";
+import SemesterBadge from "@/components/SemesterBadge";
 import { useAuth } from "@/context/AuthContext";
+import { useSemester } from "@/context/SemesterContext";
 import { completionRequestId, completionRequestRef, requestStatusLabel } from "@/lib/completionRequests";
 import { db } from "@/lib/firebase";
 import useMyHours from "@/lib/useMyHours";
@@ -194,6 +196,7 @@ function EmptyState({ icon: Icon, text }) {
 
 function MemberDashboardContent() {
   const { user, profile, loading } = useAuth();
+  const { activeSemesterId } = useSemester();
   const email = String(user?.email || "").trim().toLowerCase();
   const { attendancePercentage } = useMyHours();
   const [events, setEvents] = useState([]);
@@ -203,7 +206,7 @@ function MemberDashboardContent() {
   const [modalItem, setModalItem] = useState(null);
   const [savingKey, setSavingKey] = useState("");
 
-  // Upcoming events only, fetched once.
+  // Upcoming events of the active semester only, fetched once.
   useEffect(() => {
     if (!db || loading || !user) return undefined;
     let cancelled = false;
@@ -212,7 +215,12 @@ function MemberDashboardContent() {
       query(collection(db, "events"), where("date", ">=", localToday()), orderBy("date"), limit(20))
     )
       .then((snapshot) => {
-        if (!cancelled) setEvents(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })));
+        if (cancelled) return;
+        setEvents(
+          snapshot.docs
+            .map((item) => ({ id: item.id, ...item.data() }))
+            .filter((event) => event.semesterId && event.semesterId === activeSemesterId),
+        );
       })
       .catch((snapshotError) => {
         if (!cancelled) setError(`Could not load dashboard events (${snapshotError.code || "unknown"}).`);
@@ -221,7 +229,7 @@ function MemberDashboardContent() {
     return () => {
       cancelled = true;
     };
-  }, [loading, user]);
+  }, [activeSemesterId, loading, user]);
 
   // One query for all of my tasks across events, fetched once.
   useEffect(() => {
@@ -275,7 +283,7 @@ function MemberDashboardContent() {
     () =>
       tasks.flatMap((task) => {
         const event = eventsById[task.eventId];
-        if (!event) return []; // task belongs to a past or unloaded event
+        if (!event) return []; // task belongs to a past, other-semester or unloaded event
         const items = taskDone(task) ? [] : [{ event, task, subtaskId: "todo", name: task.title }];
         if (task.subtasks?.length)
           items.push(
@@ -354,9 +362,12 @@ function MemberDashboardContent() {
           <h1 className="mt-2 text-3xl font-bold tracking-tight lg:text-4xl">Hi {firstName}</h1>
           <p className="mt-1.5 text-sm text-white/50">Signed in as {user?.email}</p>
         </div>
-        <div className="flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/70 backdrop-blur-md">
-          <CalendarDays className="size-4 text-violet-300" />
-          {todayLabel}
+        <div className="flex flex-wrap items-center gap-2">
+          <SemesterBadge />
+          <div className="flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/70 backdrop-blur-md">
+            <CalendarDays className="size-4 text-violet-300" />
+            {todayLabel}
+          </div>
         </div>
       </div>
 

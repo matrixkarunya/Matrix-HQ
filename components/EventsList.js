@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { useSemester } from "@/context/SemesterContext";
 import { db } from "@/lib/firebase";
 
 const PAGE_SIZE = 12;
@@ -73,6 +74,7 @@ function EmptyState({ text, onClear }) {
 // `action` is an optional node (the Create button) rendered in the toolbar.
 export default function EventsList({ role, onEdit, onDelete, action }) {
   const { user, role: authRole, loading } = useAuth();
+  const { selectedSemesterId, loading: semesterLoading } = useSemester();
   const activeRole = role || authRole;
   const signedInEmail = String(user?.email || "").trim().toLowerCase();
   const [events, setEvents] = useState([]);
@@ -113,18 +115,19 @@ export default function EventsList({ role, onEdit, onDelete, action }) {
   // Back to page 1 whenever the view changes
   useEffect(() => {
     setPage(1);
-  }, [tab, search]);
+  }, [tab, search, selectedSemesterId]);
 
-  // Search first, then split, so the tab counts reflect the search
+  // Only the selected semester's events, then search, so the tab counts reflect both
   const searched = useMemo(() => {
+    const inSemester = events.filter((event) => event.semesterId && event.semesterId === selectedSemesterId);
     const term = search.trim().toLowerCase();
-    if (!term) return events;
-    return events.filter((event) =>
+    if (!term) return inSemester;
+    return inSemester.filter((event) =>
       [event.name, event.venue, event.type, event.date, formatEventDate(event.date)]
         .map((value) => String(value || "").toLowerCase())
         .some((value) => value.includes(term)),
     );
-  }, [events, search]);
+  }, [events, search, selectedSemesterId]);
 
   const active = useMemo(
     () =>
@@ -150,6 +153,7 @@ export default function EventsList({ role, onEdit, onDelete, action }) {
 
   const showAttendance = ["superadmin", "admin", "member"].includes(activeRole);
   const showTodo = ["superadmin", "admin", "member"].includes(activeRole);
+  const listLoading = eventsLoading || semesterLoading;
 
   function goToPage(next) {
     setPage(next);
@@ -316,7 +320,7 @@ export default function EventsList({ role, onEdit, onDelete, action }) {
 
       <div ref={listTopRef} className="scroll-mt-24" />
 
-      {eventsLoading ? (
+      {listLoading ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" aria-busy="true">
           {Array.from({ length: 6 }).map((_, index) => (
             <div key={index} className={`${GLASS} h-40 animate-pulse motion-reduce:animate-none`} />
@@ -325,9 +329,17 @@ export default function EventsList({ role, onEdit, onDelete, action }) {
         </div>
       ) : visible.length === 0 ? (
         search.trim() ? (
-          <EmptyState text={`No ${tab} events match "${search.trim()}".`} onClear={() => setSearch("")} />
+          <EmptyState text={`No ${tab} events match "${search.trim()}" in this semester.`} onClear={() => setSearch("")} />
         ) : (
-          <EmptyState text={tab === "active" ? "No active events." : "No completed events yet."} />
+          <EmptyState
+            text={
+              !selectedSemesterId
+                ? "No active semester yet."
+                : tab === "active"
+                  ? "No active events in this semester."
+                  : "No completed events in this semester yet."
+            }
+          />
         )
       ) : (
         <>

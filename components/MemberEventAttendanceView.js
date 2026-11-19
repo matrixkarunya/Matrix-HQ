@@ -97,10 +97,10 @@ function MemberEventAttendanceContent() {
   if (eventLoading || attendanceLoading) {
     return (
       <div className="w-full text-white" aria-busy="true">
-        <div className={`${GLASS} h-24 animate-pulse`} />
+        <div className={`${GLASS} h-24 animate-pulse motion-reduce:animate-none`} />
         <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
           {Array.from({ length: 4 }).map((_, index) => (
-            <div key={index} className={`${GLASS} h-28 animate-pulse`} />
+            <div key={index} className={`${GLASS} h-28 animate-pulse motion-reduce:animate-none`} />
           ))}
         </div>
       </div>
@@ -108,7 +108,8 @@ function MemberEventAttendanceContent() {
   }
 
   const summary = event?.attendanceSummary;
-  const timeTotals = summary ? splitRange(summary.startTime, summary.endTime) : null;
+  const isWorkingDay = summary?.isWorkingDay !== false;
+  const timeTotals = summary ? splitRange(summary.startTime, summary.endTime, isWorkingDay) : null;
 
   return (
     // The shell already renders <main>, so this is a div to avoid nested <main> tags
@@ -119,9 +120,20 @@ function MemberEventAttendanceContent() {
       <div className="mt-6">
         <p className="text-xs font-semibold uppercase tracking-[.22em] text-violet-300/80">Event attendance</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight lg:text-4xl">{event?.name || "Event attendance"}</h1>
-        <div className="mt-3 flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 text-sm text-white/70 backdrop-blur-md">
-          <CalendarDays className="size-4 text-violet-300" />
-          {formatDate(event?.date)}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 text-sm text-white/70 backdrop-blur-md">
+            <CalendarDays className="size-4 text-violet-300" />
+            {formatDate(event?.date)}
+          </div>
+          {summary ? (
+            <div className="flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 text-sm text-white/70 backdrop-blur-md">
+              <span
+                className={`size-1.5 rounded-full ${isWorkingDay ? "bg-emerald-300" : "bg-amber-300"}`}
+                aria-hidden="true"
+              />
+              {isWorkingDay ? "Working day" : "Non-working day"}
+            </div>
+          ) : null}
         </div>
       </div>
 

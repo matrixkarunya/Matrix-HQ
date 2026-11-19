@@ -5,6 +5,7 @@ import { ArrowLeft, CalendarDays, ClipboardCheck } from "lucide-react";
 import RoleGuard from "@/components/RoleGuard";
 import AttendanceStatBoxes from "@/components/AttendanceStatBoxes";
 import AttendanceStatusBadge from "@/components/AttendanceStatusBadge";
+import SemesterSelect from "@/components/SemesterSelect";
 import { useAuth } from "@/context/AuthContext";
 import { formatMinutes } from "@/lib/hours";
 import useMyHours from "@/lib/useMyHours";
@@ -22,19 +23,23 @@ function timeRange(row) {
   return row.startTime || row.endTime ? `${row.startTime || "—"} to ${row.endTime || "—"}` : "—";
 }
 
+function rowKey(row) {
+  return row.meetingId ? `meeting-${row.meetingId}` : `event-${row.eventId}`;
+}
+
 function AttendanceContent() {
   const { role } = useAuth();
   const {
-  loading,
-  error,
-  totals,
-  meetingTotalMinutes,
-  combinedTotals,
-  rows,
-  combinedAttendancePercentage,
-  combinedAttendanceCount,
-  combinedAttendanceRecordedCount,
-} = useMyHours();
+    loading,
+    error,
+    totals,
+    meetingTotalMinutes,
+    combinedTotals,
+    rows,
+    combinedAttendancePercentage,
+    combinedAttendanceCount,
+    combinedAttendanceRecordedCount,
+  } = useMyHours();
   const backHref = role === "admin" ? "/admin" : "/member";
 
   return (
@@ -47,9 +52,12 @@ function AttendanceContent() {
         Back to dashboard
       </Link>
 
-      <div className="mt-6">
-        <p className="text-xs font-semibold uppercase tracking-[.22em] text-violet-300/80">Attendance</p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight lg:text-4xl">My attendance</h1>
+      <div className="mt-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[.22em] text-violet-300/80">Attendance</p>
+          <h1 className="mt-2 text-3xl font-bold tracking-tight lg:text-4xl">My attendance</h1>
+        </div>
+        <SemesterSelect />
       </div>
 
       {error ? (
@@ -62,18 +70,22 @@ function AttendanceContent() {
       ) : null}
 
       <AttendanceStatBoxes
-  workingMinutes={totals.workingMinutes}
-  nonWorkingMinutes={totals.nonWorkingMinutes}
-  meetingMinutes={meetingTotalMinutes}
-  totalMinutes={combinedTotals.totalMinutes}
-  attendancePercent={combinedAttendancePercentage}
-  attendanceCaption={combinedAttendancePercentage === null ? "" : `${combinedAttendanceCount} of ${combinedAttendanceRecordedCount} sessions`}
-/>
-<p className="mt-2 text-xs text-white/40">Hours include the sessions you attended, your approved task hours and meetings you attended; attendance percentage is based on your records.</p>
+        workingMinutes={totals.workingMinutes}
+        nonWorkingMinutes={totals.nonWorkingMinutes}
+        meetingMinutes={meetingTotalMinutes}
+        totalMinutes={combinedTotals.totalMinutes}
+        attendancePercent={combinedAttendancePercentage}
+        attendanceCaption={combinedAttendancePercentage === null ? "" : `${combinedAttendanceCount} of ${combinedAttendanceRecordedCount} sessions`}
+      />
+      <p className="mt-2 text-xs text-white/40">
+        Hours include the sessions you attended, your approved task hours and meetings you attended, for the selected
+        semester. Attendance percentage is based on your records.
+      </p>
+
       {loading ? (
         <div className="mt-6 space-y-3" aria-busy="true">
           {Array.from({ length: 4 }).map((_, index) => (
-            <div key={index} className={`${GLASS} h-16 animate-pulse`} />
+            <div key={index} className={`${GLASS} h-16 animate-pulse motion-reduce:animate-none`} />
           ))}
         </div>
       ) : rows.length === 0 ? (
@@ -81,7 +93,7 @@ function AttendanceContent() {
           <span className="flex size-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/40">
             <ClipboardCheck className="size-5" />
           </span>
-          <p className="text-sm text-white/50">No attendance recorded yet</p>
+          <p className="text-sm text-white/50">No attendance recorded in this semester yet</p>
         </div>
       ) : (
         <>
@@ -103,7 +115,7 @@ function AttendanceContent() {
               </thead>
               <tbody className="divide-y divide-white/10">
                 {rows.map((row) => (
-                  <tr key={row.eventId || row.meetingId} className="transition hover:bg-white/[0.06]">
+                  <tr key={rowKey(row)} className="transition hover:bg-white/[0.06]">
                     <td className="px-5 py-3.5 text-white/60">{row.type}</td>
                     <td className="px-5 py-3.5">
                       <div className="font-medium">{row.name}</div>
@@ -127,7 +139,7 @@ function AttendanceContent() {
           {/* Mobile cards */}
           <div className="mt-6 space-y-3 md:hidden">
             {rows.map((row) => (
-              <article key={row.eventId || row.meetingId} className={`${GLASS} p-4`}>
+              <article key={rowKey(row)} className={`${GLASS} p-4`}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h3 className="truncate text-sm font-semibold">{row.name}</h3>

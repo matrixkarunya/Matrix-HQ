@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, Clock3, Flame, Inbox, Users } from "lucide-react";
 import { collection, doc, onSnapshot, orderBy, query } from "firebase/firestore";
 import RoleGuard from "@/components/RoleGuard";
+import SemesterSelect from "@/components/SemesterSelect";
 import { useAuth } from "@/context/AuthContext";
+import { useSemester } from "@/context/SemesterContext";
 import { db } from "@/lib/firebase";
 import { formatMinutes, meetingMinutes } from "@/lib/hours";
 import { meetingDateLabel, normalizeMeetingEmail } from "@/lib/meetings";
@@ -127,31 +129,39 @@ function MiniStat({ icon: Icon, label, value, hint }) {
 
 function MemberMeetingsContent() {
   const { user, role, loading: authLoading } = useAuth();
+  const { selectedSemesterId, loading: semesterLoading } = useSemester();
   const email = normalizeMeetingEmail(user?.email);
-  const [meetings, setMeetings] = useState([]);
+  const [allMeetings, setAllMeetings] = useState([]);
   const [attendance, setAttendance] = useState({});
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [listLoading, setListLoading] = useState(true);
   const [filter, setFilter] = useState("all");
+  const loading = listLoading || semesterLoading;
+
+  // Only the selected semester's meetings
+  const meetings = useMemo(
+    () => allMeetings.filter((meeting) => meeting.semesterId && meeting.semesterId === selectedSemesterId),
+    [allMeetings, selectedSemesterId],
+  );
 
   useEffect(() => {
     if (!db || authLoading || !user || role !== "member") {
-      setMeetings([]);
-      setLoading(false);
+      setAllMeetings([]);
+      setListLoading(false);
       return undefined;
     }
-    setLoading(true);
+    setListLoading(true);
     setError("");
     const unsubscribe = onSnapshot(
       query(collection(db, "meetings"), orderBy("date", "desc")),
       (snapshot) => {
-        setMeetings(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })));
-        setLoading(false);
+        setAllMeetings(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })));
+        setListLoading(false);
       },
       (listenerError) => {
         console.error("Member meetings listener:", listenerError.code, listenerError.message);
-        setMeetings([]);
-        setLoading(false);
+        setAllMeetings([]);
+        setListLoading(false);
         setError(`Could not load meetings (${listenerError.code || "unknown"}).`);
       },
     );
@@ -159,8 +169,8 @@ function MemberMeetingsContent() {
   }, [authLoading, email, role, user]);
 
   useEffect(() => {
+    setAttendance({});
     if (!db || authLoading || !user || role !== "member" || !email || !meetings.length) {
-      setAttendance({});
       return undefined;
     }
     const unsubscribers = meetings.map((meeting) =>
@@ -243,6 +253,7 @@ function MemberMeetingsContent() {
         <p className="text-xs font-semibold uppercase tracking-[.22em] text-violet-300/80">Member meetings</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight lg:text-4xl">Meetings</h1>
         <p className="mt-1.5 text-sm text-white/50">Your meeting attendance and hours.</p>
+        <SemesterSelect className="mt-3" />
       </div>
 
       {error ? (
@@ -253,7 +264,7 @@ function MemberMeetingsContent() {
 
       {/* Overview */}
       {loading ? (
-        <div className={`${GLASS} h-48 animate-pulse`} />
+        <div className={`${GLASS} h-48 animate-pulse motion-reduce:animate-none`} />
       ) : (
         <section className={`${GLASS} p-4 sm:p-6`}>
           <div className="flex flex-col items-center gap-5 sm:flex-row sm:gap-8">
@@ -329,7 +340,7 @@ function MemberMeetingsContent() {
       {loading ? (
         <div className="space-y-3" aria-busy="true">
           {Array.from({ length: 3 }).map((_, index) => (
-            <div key={index} className={`${GLASS} h-20 animate-pulse`} />
+            <div key={index} className={`${GLASS} h-20 animate-pulse motion-reduce:animate-none`} />
           ))}
         </div>
       ) : meetings.length === 0 ? (
@@ -337,14 +348,16 @@ function MemberMeetingsContent() {
           <span className="flex size-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/40">
             <Inbox className="size-5" aria-hidden="true" />
           </span>
-          <p className="text-sm text-white/50">No meetings yet.</p>
+          <p className="text-sm text-white/50">
+            {selectedSemesterId ? "No meetings in this semester yet." : "No active semester yet."}
+          </p>
         </div>
       ) : visible.length === 0 ? (
         <div className={`${GLASS} flex min-h-40 flex-col items-center justify-center gap-3 p-8 text-center`}>
           <span className="flex size-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/40">
             <CalendarDays className="size-5" aria-hidden="true" />
           </span>
-          <p className="text-sm text-white/50">No {filter} meetings.</p>
+          <p className="text-sm text-white/50">No {filter} meetings in this semester.</p>
         </div>
       ) : (
         <div className="space-y-6">

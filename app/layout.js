@@ -1,5 +1,6 @@
 import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
+import { SemesterProvider } from "@/context/SemesterContext";
 import MeshDriftBackground from "@/components/MeshDriftBackground";
 import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
 
@@ -29,7 +30,9 @@ export default function RootLayout({ children }) {
         <MeshDriftBackground dim={0.35} />
 
         <div className="relative z-10 min-h-screen">
-          <AuthProvider>{children}</AuthProvider>
+          <AuthProvider>
+            <SemesterProvider>{children}</SemesterProvider>
+          </AuthProvider>
         </div>
       </body>
     </html>

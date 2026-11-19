@@ -5,7 +5,9 @@ import { useEffect, useRef, useState } from "react";
 import { addDoc, collection, doc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { ArrowLeft, Loader2, Plus } from "lucide-react";
 import MeetingsList from "@/components/MeetingsList";
+import SemesterSelect from "@/components/SemesterSelect";
 import { useAuth } from "@/context/AuthContext";
+import { useSemester } from "@/context/SemesterContext";
 import { ROLE_HOME } from "@/lib/config";
 import { db } from "@/lib/firebase";
 import { deleteMeetingAndAttendance } from "@/lib/meetings";
@@ -20,6 +22,14 @@ const LABEL = "mb-1.5 block text-sm font-medium text-white/80";
 const ERROR = "rounded-xl border border-red-300/20 bg-red-400/10 px-4 py-3 text-sm text-red-100 backdrop-blur-md";
 
 function Modal({ eyebrow, title, onClose, children }) {
+  useEffect(() => {
+    function handleEscape(event) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [onClose]);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4"
@@ -43,6 +53,9 @@ function Modal({ eyebrow, title, onClose, children }) {
 
 export default function MeetingsManager() {
   const { user, profile, role } = useAuth();
+  const { activeSemesterId, loading: semesterLoading } = useSemester();
+  const noSemester = !semesterLoading && !activeSemesterId;
+  const createDisabled = noSemester || semesterLoading;
   const [modal, setModal] = useState(null);
   const [title, setTitle] = useState("");
   const [date, setDate] = useState("");
@@ -60,39 +73,76 @@ export default function MeetingsManager() {
     toastTimer.current = setTimeout(() => setToast(""), 2500);
   }
 
-  function openCreate() { setModal({ type: "create" }); setTitle(""); setDate(""); setNote(""); setError(""); }
-  function openEdit(meeting) { setModal({ type: "edit", meeting }); setTitle(meeting.title || ""); setDate(meeting.date || ""); setNote(meeting.note || ""); setError(""); }
+  function openCreate() {
+    if (createDisabled) return;
+    setModal({ type: "create" });
+    setTitle("");
+    setDate("");
+    setNote("");
+    setError("");
+  }
+  function openEdit(meeting) {
+    setModal({ type: "edit", meeting });
+    setTitle(meeting.title || "");
+    setDate(meeting.date || "");
+    setNote(meeting.note || "");
+    setError("");
+  }
   function openDelete(meeting) { setModal({ type: "delete", meeting }); setError(""); }
   function closeModal() { if (!saving) { setModal(null); setError(""); } }
 
   async function handleSubmit(event) {
     event.preventDefault();
+    if (modal?.type !== "edit" && !activeSemesterId) {
+      setError("There is no active semester. Ask the superadmin to start one.");
+      return;
+    }
     const trimmedTitle = title.trim();
     if (trimmedTitle.length < 2) { setError("Enter a meeting title."); return; }
     if (!date) { setError("Pick a date."); return; }
-    setSaving(true); setError("");
+    setSaving(true);
+    setError("");
     try {
       const payload = { title: trimmedTitle, date, ...(note.trim() ? { note: note.trim() } : {}) };
       if (modal.type === "edit") {
+        // Edits never touch semesterId, so a meeting keeps the semester it was created in.
         await updateDoc(doc(db, "meetings", modal.meeting.id), payload);
         showToast("Meeting updated");
       } else {
-        await addDoc(collection(db, "meetings"), { ...payload, createdBy: String(user?.email || "").trim().toLowerCase(), createdByName: String(profile?.fullName || profile?.name || user?.displayName || user?.email || "").trim(), createdAt: serverTimestamp() });
+        await addDoc(collection(db, "meetings"), {
+          ...payload,
+          semesterId: activeSemesterId,
+          createdBy: String(user?.email || "").trim().toLowerCase(),
+          createdByName: String(profile?.fullName || profile?.name || user?.displayName || user?.email || "").trim(),
+          createdAt: serverTimestamp(),
+        });
         showToast("Meeting created");
       }
+      setSaving(false);
       closeModal();
     } catch (saveError) {
       console.error("Meeting save:", saveError?.code, saveError?.message);
       setError(`Could not save the meeting (${saveError?.code || "unknown"}).`);
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleDelete() {
     if (!modal?.meeting) return;
-    setSaving(true); setError("");
-    try { await deleteMeetingAndAttendance(modal.meeting.id); closeModal(); showToast("Meeting deleted"); }
-    catch (deleteError) { console.error("Meeting delete:", deleteError?.code, deleteError?.message); setError(`Could not delete the meeting (${deleteError?.code || "unknown"}).`); }
-    finally { setSaving(false); }
+    setSaving(true);
+    setError("");
+    try {
+      await deleteMeetingAndAttendance(modal.meeting.id);
+      setSaving(false);
+      closeModal();
+      showToast("Meeting deleted");
+    } catch (deleteError) {
+      console.error("Meeting delete:", deleteError?.code, deleteError?.message);
+      setError(`Could not delete the meeting (${deleteError?.code || "unknown"}).`);
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -102,16 +152,36 @@ export default function MeetingsManager() {
         Back to dashboard
       </Link>
 
-      <header className="mb-4 mt-6 flex items-end justify-between gap-4 sm:mb-6">
-        <div className="min-w-0">
-          <p className={EYEBROW}>Meetings</p>
-          <h1 className="mt-2 text-3xl font-bold tracking-tight lg:text-4xl">Manage meetings</h1>
-          <p className="mt-2 text-sm text-white/50">Create, edit and remove meetings and their attendance.</p>
+      <header className="mb-4 mt-6 sm:mb-6">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="min-w-0">
+            <p className={EYEBROW}>Meetings</p>
+            <h1 className="mt-2 text-3xl font-bold tracking-tight lg:text-4xl">Manage meetings</h1>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <SemesterSelect />
+            <button
+              type="button"
+              onClick={openCreate}
+              disabled={createDisabled}
+              className={`${PRIMARY} hidden shrink-0 sm:inline-flex`}
+            >
+              <Plus className="size-4" aria-hidden="true" />
+              Add meeting
+            </button>
+          </div>
         </div>
-        <button type="button" onClick={openCreate} className={`${PRIMARY} hidden shrink-0 sm:inline-flex`}>
-          <Plus className="size-4" aria-hidden="true" />
-          Add meeting
-        </button>
+        <p className="mt-2 text-sm text-white/50">Create, edit and remove meetings and their attendance.</p>
+        {noSemester ? (
+          <p role="alert" className="mt-4 rounded-xl border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+            There is no active semester, so meetings can&apos;t be created yet.{" "}
+            {role === "superadmin" ? (
+              <Link href="/superadmin/semesters" className="underline underline-offset-4">Start one</Link>
+            ) : (
+              "Ask the superadmin to start one."
+            )}
+          </p>
+        ) : null}
       </header>
 
       <MeetingsList
@@ -122,6 +192,7 @@ export default function MeetingsManager() {
           <button
             type="button"
             onClick={openCreate}
+            disabled={createDisabled}
             aria-label="Add meeting"
             className={`${PRIMARY} shrink-0 !px-4 sm:hidden`}
           >
