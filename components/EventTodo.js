@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   addDoc,
   collection,
-  deleteDoc,
+  deleteField,
   doc,
   getDocs,
   onSnapshot,
@@ -98,6 +98,13 @@ function cleanSubtasks(subtasks) {
     : [];
 }
 
+function hourSummary(logCount, requestCount) {
+  const parts = [];
+  if (logCount) parts.push(`${logCount} hour ${logCount === 1 ? "entry" : "entries"} logged by staff`);
+  if (requestCount) parts.push(`${requestCount} approved member ${requestCount === 1 ? "request" : "requests"}`);
+  return parts.join(" and ");
+}
+
 function BackLink({ href }) {
   return (
     <Link
@@ -143,6 +150,43 @@ function SubtaskAdder({ onAdd }) {
   );
 }
 
+function ConfirmDialog({ titleId, title, children, confirmLabel, busy, disabled, onCancel, onConfirm }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+      onMouseDown={(e) => e.target === e.currentTarget && !busy && onCancel()}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="w-full max-w-sm rounded-t-3xl border border-white/10 bg-neutral-950/85 p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] text-white shadow-2xl shadow-black/60 backdrop-blur-2xl sm:rounded-2xl"
+      >
+        <h2 id={titleId} className="text-xl font-semibold">{title}</h2>
+        <div className="mt-3 space-y-3 text-sm text-white/60">{children}</div>
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="!min-h-0 !rounded-full border border-white/15 bg-white/5 px-5 py-2.5 text-sm text-white/80 transition hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy || disabled}
+            className="!min-h-0 !rounded-full bg-red-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-red-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function EventTodo({ readOnly: forcedReadOnly = false }) {
   const params = useParams();
   const { user, role, loading } = useAuth();
@@ -156,7 +200,10 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
   const [taskFormError, setTaskFormError] = useState("");
   const [taskSaving, setTaskSaving] = useState(false);
   const [deleteTaskId, setDeleteTaskId] = useState("");
+  const [deleteHours, setDeleteHours] = useState(null); // { loading, logRefs, requestRefs }
   const [deleteSaving, setDeleteSaving] = useState(false);
+  const [untickDialog, setUntickDialog] = useState(null); // { task, update, logRefs, requestRefs, reopening }
+  const [untickSaving, setUntickSaving] = useState(false);
   const [toast, setToast] = useState("");
   const [hoursTask, setHoursTask] = useState(null);
   const [hoursSaving, setHoursSaving] = useState(false);
@@ -277,7 +324,38 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
     toastTimer.current = setTimeout(() => setToast(""), 2500);
   }
 
-  // ---------- Hours cleanup ----------
+  // ---------- Hours lookup and cleanup ----------
+
+  // Finds the hours tied to a task.
+  //  - includeLogs: staff-tick hours (workLogs) for the whole task
+  //  - subtaskId:   only approved requests for that subtask (null = every approved request for the task)
+  async function collectTaskHours(taskId, { includeLogs = true, subtaskId = null } = {}) {
+    let logRefs = [];
+    if (includeLogs) {
+      const logs = await getDocs(
+        query(
+          collection(db, "workLogs"),
+          where("eventId", "==", String(eventId)),
+          where("taskId", "==", String(taskId)),
+        ),
+      );
+      logRefs = logs.docs.map((item) => item.ref);
+    }
+
+    const requests = await getDocs(
+      query(
+        collection(db, "completionRequests"),
+        where("eventId", "==", String(eventId)),
+        where("todoId", "==", String(taskId)),
+        where("status", "==", "approved"),
+      ),
+    );
+    const requestRefs = requests.docs
+      .filter((item) => !subtaskId || item.data().subtaskId === subtaskId)
+      .map((item) => item.ref);
+
+    return { logRefs, requestRefs };
+  }
 
   // Deletes documents in chunks (Firestore batches are limited to 500 writes)
   async function deleteRefs(refs) {
@@ -288,47 +366,20 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
     }
   }
 
-  // Hours that members earned through approved completion requests.
-  // Kept separate from the main update so a permission problem here
-  // (only the event owner or a superadmin can delete requests) doesn't block unticking.
-  async function removeApprovedRequests(taskId) {
+  // Removes every approved member request for the event (used when reopening the event)
+  async function removeApprovedRequests() {
     try {
-      const constraints = [
-        where("eventId", "==", String(eventId)),
-        where("status", "==", "approved"),
-      ];
-      if (taskId) constraints.push(where("todoId", "==", String(taskId)));
-      const snapshot = await getDocs(query(collection(db, "completionRequests"), ...constraints));
+      const snapshot = await getDocs(
+        query(
+          collection(db, "completionRequests"),
+          where("eventId", "==", String(eventId)),
+          where("status", "==", "approved"),
+        ),
+      );
       await deleteRefs(snapshot.docs.map((item) => item.ref));
     } catch (error) {
       console.error("Remove approved requests:", error?.code, error?.message);
-      showToast(`Task updated, but some member-submitted hours could not be removed (${error?.code || "unknown"})`);
-    }
-  }
-
-  // Saves a task change. If the task goes from done to not done, its logged hours are
-  // deleted in the same batch, so the task update and the hours removal succeed or fail together.
-  async function applyTaskUpdate(task, taskUpdate) {
-    const wasDone = taskIsDone(normalizeTask(task));
-    const reopening = wasDone && !taskUpdate.done;
-    const batch = writeBatch(db);
-    batch.update(doc(db, "events", eventId, "tasks", task.id), taskUpdate);
-
-    if (reopening) {
-      const logs = await getDocs(
-        query(
-          collection(db, "workLogs"),
-          where("eventId", "==", String(eventId)),
-          where("taskId", "==", String(task.id)),
-        ),
-      );
-      logs.docs.forEach((log) => batch.delete(log.ref));
-    }
-
-    await batch.commit();
-
-    if (reopening) {
-      await removeApprovedRequests(task.id);
+      showToast(`Event reopened, but some member-submitted hours could not be removed (${error?.code || "unknown"})`);
     }
   }
 
@@ -336,7 +387,77 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
   async function removeAllTaskHours() {
     const logs = await getDocs(query(collection(db, "workLogs"), where("eventId", "==", String(eventId))));
     await deleteRefs(logs.docs.map((log) => log.ref));
-    await removeApprovedRequests(null);
+    await removeApprovedRequests();
+  }
+
+  // Writes the task change and deletes the hours in ONE batch, so they succeed or fail together
+  async function commitTaskChange(task, update, refs, reopening) {
+    const batch = writeBatch(db);
+    batch.update(doc(db, "events", eventId, "tasks", task.id), {
+      ...update,
+      ...(reopening ? { approvalRequestId: deleteField() } : {}),
+    });
+    refs.forEach((ref) => batch.delete(ref));
+    await batch.commit();
+  }
+
+  // Every change that could remove hours goes through here:
+  //  - a done task becomes not done  -> all hours of the task are removed
+  //  - a done subtask is unticked on a not-done task -> that subtask's approved request is removed
+  // If hours exist, the user is asked to confirm first.
+  async function saveTaskChange(task, update, subtaskId = null) {
+    const wasDone = taskIsDone(normalizeTask(task));
+
+    if (!wasDone && !subtaskId) {
+      await updateDoc(doc(db, "events", eventId, "tasks", task.id), update);
+      return;
+    }
+
+    const reopening = wasDone && !update.done;
+    const { logRefs, requestRefs } = wasDone
+      ? await collectTaskHours(task.id)
+      : await collectTaskHours(task.id, { includeLogs: false, subtaskId });
+
+    if (!wasDone || !reopening) {
+      // Task stays as it is (or was not done): only the matching subtask hours can go
+      if (!wasDone) {
+        if (requestRefs.length === 0) {
+          await updateDoc(doc(db, "events", eventId, "tasks", task.id), update);
+          return;
+        }
+        setUntickDialog({ task, update, logRefs: [], requestRefs, reopening: false });
+        return;
+      }
+      await updateDoc(doc(db, "events", eventId, "tasks", task.id), update);
+      return;
+    }
+
+    if (logRefs.length === 0 && requestRefs.length === 0) {
+      await commitTaskChange(task, update, [], true);
+      return;
+    }
+
+    setUntickDialog({ task, update, logRefs, requestRefs, reopening: true });
+  }
+
+  async function confirmUntick() {
+    if (!untickDialog) return;
+    setUntickSaving(true);
+    try {
+      const { task, update, logRefs, requestRefs, reopening } = untickDialog;
+      await commitTaskChange(task, update, [...logRefs, ...requestRefs], reopening);
+      setUntickDialog(null);
+      showToast("Unticked and hours removed");
+    } catch (error) {
+      console.error("Untick error:", error?.code, error?.message);
+      showToast(
+        error?.code === "permission-denied"
+          ? "Only the event creator or a superadmin can remove approved hours"
+          : `Could not untick the task (${error?.code || "unknown"})`,
+      );
+    } finally {
+      setUntickSaving(false);
+    }
   }
 
   // ---------- Task modal ----------
@@ -418,18 +539,46 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
     }
   }
 
+  // ---------- Delete task (also deletes its hours) ----------
+
+  async function openDeleteDialog(taskId) {
+    setDeleteTaskId(taskId);
+    setDeleteHours({ loading: true, logRefs: [], requestRefs: [] });
+    try {
+      const { logRefs, requestRefs } = await collectTaskHours(taskId);
+      setDeleteHours({ loading: false, logRefs, requestRefs });
+    } catch (error) {
+      console.error("Look up task hours:", error?.code, error?.message);
+      setDeleteHours({ loading: false, logRefs: [], requestRefs: [], failed: true });
+    }
+  }
+
+  function closeDeleteDialog() {
+    if (deleteSaving) return;
+    setDeleteTaskId("");
+    setDeleteHours(null);
+  }
+
   async function handleDeleteTask() {
-    if (!deleteTaskId || !eventId || readOnly) return;
+    if (!deleteTaskId || !eventId || readOnly || !deleteHours || deleteHours.loading) return;
 
     setDeleteSaving(true);
 
     try {
-      await deleteDoc(doc(db, "events", eventId, "tasks", deleteTaskId));
+      const batch = writeBatch(db);
+      batch.delete(doc(db, "events", eventId, "tasks", deleteTaskId));
+      [...deleteHours.logRefs, ...deleteHours.requestRefs].forEach((ref) => batch.delete(ref));
+      await batch.commit();
       setDeleteTaskId("");
-      showToast("Task deleted");
+      setDeleteHours(null);
+      showToast("Task and its hours deleted");
     } catch (error) {
       console.error("Delete task error:", error?.code, error?.message);
-      showToast(`Could not delete the task (${error?.code || "unknown"})`);
+      showToast(
+        error?.code === "permission-denied"
+          ? "Only the event creator or a superadmin can delete a task with approved hours"
+          : `Could not delete the task (${error?.code || "unknown"})`,
+      );
     } finally {
       setDeleteSaving(false);
     }
@@ -446,11 +595,10 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
         setHoursTask({ task, nextTask });
         return;
       }
-      await applyTaskUpdate(task, {
+      await saveTaskChange(task, {
         subtasks: cleanSubtasks(nextTask.subtasks),
         done: Boolean(nextTask.done),
       });
-      if (!nextTask.done) showToast("Task reopened and hours removed");
     } catch (error) {
       console.error("Toggle task error:", error?.code, error?.message);
       showToast(`Couldn't update the task (${error?.code || "unknown"})`);
@@ -461,17 +609,21 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
     if (readOnly || !task?.id) return;
 
     try {
+      const subtask = (task.subtasks || []).find((item) => item.id === subtaskId);
+      const unticking = Boolean(subtask?.done);
       const nextTask = toggleSubtask(task, subtaskId);
       if (nextTask.done && task.assignees?.length > 0) {
         setHoursTask({ task, nextTask });
         return;
       }
-      const wasDone = taskIsDone(normalizeTask(task));
-      await applyTaskUpdate(task, {
-        subtasks: cleanSubtasks(nextTask.subtasks),
-        done: Boolean(nextTask.done),
-      });
-      if (wasDone && !nextTask.done) showToast("Task reopened and hours removed");
+      await saveTaskChange(
+        task,
+        {
+          subtasks: cleanSubtasks(nextTask.subtasks),
+          done: Boolean(nextTask.done),
+        },
+        unticking ? subtaskId : null,
+      );
     } catch (error) {
       console.error("Toggle subtask error:", error?.code, error?.message);
       showToast(`Couldn't update the subtask (${error?.code || "unknown"})`);
@@ -529,12 +681,12 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
 
     try {
       // A new, unfinished subtask means the task is no longer complete.
-      // If it was done, applyTaskUpdate also removes its logged hours.
-      await applyTaskUpdate(task, {
+      // If the task was done and has hours, the user is asked to confirm removing them.
+      await saveTaskChange(task, {
         subtasks: [...cleanSubtasks(task.subtasks), { id: crypto.randomUUID(), title, done: false }],
         done: false,
       });
-      showToast("Subtask added");
+      if (!taskIsDone(normalizeTask(task))) showToast("Subtask added");
     } catch (error) {
       console.error("Add subtask error:", error?.code, error?.message);
       showToast(`Couldn't add the subtask (${error?.code || "unknown"})`);
@@ -573,6 +725,7 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
         await updateDoc(doc(db, "events", eventId, "tasks", task.id), {
           subtasks: cleanSubtasks(task.subtasks),
           done: false,
+          approvalRequestId: deleteField(),
         });
       }
 
@@ -629,6 +782,8 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
         Mark event complete
       </button>
     ) : null;
+
+  const deleteHoursCount = deleteHours ? deleteHours.logRefs.length + deleteHours.requestRefs.length : 0;
 
   return (
     // The shell already renders <main>, so this is a div to avoid nested <main> tags
@@ -898,7 +1053,7 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setDeleteTaskId(task.id)}
+                        onClick={() => openDeleteDialog(task.id)}
                         aria-label={`Delete ${normalized.title}`}
                         title="Delete"
                         className={iconButtonDanger}
@@ -941,7 +1096,7 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
                           <Pencil className="size-3.5" aria-hidden="true" />
                           Edit task
                         </button>
-                        <button type="button" onClick={() => setDeleteTaskId(task.id)} className={dangerGhostButton}>
+                        <button type="button" onClick={() => openDeleteDialog(task.id)} className={dangerGhostButton}>
                           <Trash2 className="size-3.5" aria-hidden="true" />
                           Delete
                         </button>
@@ -1018,39 +1173,49 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
         />
       ) : null}
 
-      {deleteTaskId && !forcedReadOnly ? (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4"
-          onMouseDown={(e) => e.target === e.currentTarget && !deleteSaving && setDeleteTaskId("")}
+      {/* Warning: unticking something that has hours */}
+      {untickDialog ? (
+        <ConfirmDialog
+          titleId="untick-task-title"
+          title="Remove logged hours?"
+          confirmLabel={untickSaving ? "Removing…" : "Untick and delete hours"}
+          busy={untickSaving}
+          onCancel={() => setUntickDialog(null)}
+          onConfirm={confirmUntick}
         >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="delete-task-title"
-            className="w-full max-w-sm rounded-t-3xl border border-white/10 bg-neutral-950/85 p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] text-white shadow-2xl shadow-black/60 backdrop-blur-2xl sm:rounded-2xl"
-          >
-            <h2 id="delete-task-title" className="text-xl font-semibold">Delete task?</h2>
-            <p className="mt-3 text-sm text-white/60">This permanently deletes the task. This cannot be undone.</p>
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setDeleteTaskId("")}
-                disabled={deleteSaving}
-                className="!min-h-0 !rounded-full border border-white/15 bg-white/5 px-5 py-2.5 text-sm text-white/80 transition hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleDeleteTask}
-                disabled={deleteSaving}
-                className="!min-h-0 !rounded-full bg-red-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-red-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {deleteSaving ? "Deleting…" : "Delete"}
-              </button>
-            </div>
-          </section>
-        </div>
+          <p>
+            <span className="font-semibold text-white">{untickDialog.task.title}</span>{" "}
+            {untickDialog.reopening ? "will be marked as not done." : "has a subtask that will be unticked."}
+          </p>
+          <p>
+            This permanently deletes the hours counted when it was completed:{" "}
+            {hourSummary(untickDialog.logRefs.length, untickDialog.requestRefs.length)}. This cannot be undone.
+          </p>
+        </ConfirmDialog>
+      ) : null}
+
+      {/* Delete task: also deletes its hours */}
+      {deleteTaskId && !forcedReadOnly ? (
+        <ConfirmDialog
+          titleId="delete-task-title"
+          title="Delete task?"
+          confirmLabel={deleteSaving ? "Deleting…" : "Delete"}
+          busy={deleteSaving}
+          disabled={!deleteHours || deleteHours.loading}
+          onCancel={closeDeleteDialog}
+          onConfirm={handleDeleteTask}
+        >
+          <p>This permanently deletes the task. This cannot be undone.</p>
+          {deleteHours?.loading ? <p className="text-white/40">Checking logged hours…</p> : null}
+          {deleteHours?.failed ? (
+            <p className="text-amber-300">Could not check logged hours. Deleting now may leave its hours behind.</p>
+          ) : null}
+          {deleteHoursCount > 0 ? (
+            <p className="rounded-xl border border-red-300/20 bg-red-400/10 px-3 py-2 text-red-100">
+              Its hours will be deleted too: {hourSummary(deleteHours.logRefs.length, deleteHours.requestRefs.length)}.
+            </p>
+          ) : null}
+        </ConfirmDialog>
       ) : null}
 
       {toast ? (
