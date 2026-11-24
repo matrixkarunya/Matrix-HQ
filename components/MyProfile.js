@@ -136,7 +136,7 @@ function validateForm(formData) {
   if (!fullName) errors.fullName = "Full name is required.";
   if (!registerNumber) {
     errors.registerNumber = "Register number is required.";
-  } else if (!/^URK26CS\d{4}$/.test(registerNumber)) {
+  } else if (!/^(URK|PRK)\d{2}[A-Z]{2,3}\d{4}$/.test(registerNumber)) {
     errors.registerNumber = "Enter a valid register number.";
   }
   if (!formData.currentYear) errors.currentYear = "Select your current year.";
