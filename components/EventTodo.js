@@ -7,11 +7,13 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   updateDoc,
+  where,
   writeBatch,
 } from "firebase/firestore";
 import { useParams } from "next/navigation";
@@ -36,7 +38,6 @@ import TimeRangesModal from "@/components/TimeRangesModal";
 import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
 import {
-  addSubtask,
   eventProgress,
   normalizeTask,
   taskIsDone,
@@ -46,6 +47,7 @@ import {
 import useUsers from "@/lib/useUsers";
 
 const PAGE_SIZE = 10;
+const BATCH_LIMIT = 400;
 
 const GLASS =
   "rounded-2xl border border-white/10 bg-white/[0.06] shadow-lg shadow-black/20 backdrop-blur-xl";
@@ -84,6 +86,16 @@ function formatDateForDisplay(dateString) {
   const [year, month, day] = dateString.split("-").map(Number);
   const parsed = new Date(year, month - 1, day);
   return parsed.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+}
+
+function cleanSubtasks(subtasks) {
+  return Array.isArray(subtasks)
+    ? subtasks.map((subtask) => ({
+        id: String(subtask?.id ?? "").trim() || crypto.randomUUID(),
+        title: String(subtask?.title ?? "").trim(),
+        done: Boolean(subtask?.done),
+      }))
+    : [];
 }
 
 function BackLink({ href }) {
@@ -265,6 +277,70 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
     toastTimer.current = setTimeout(() => setToast(""), 2500);
   }
 
+  // ---------- Hours cleanup ----------
+
+  // Deletes documents in chunks (Firestore batches are limited to 500 writes)
+  async function deleteRefs(refs) {
+    for (let index = 0; index < refs.length; index += BATCH_LIMIT) {
+      const batch = writeBatch(db);
+      refs.slice(index, index + BATCH_LIMIT).forEach((ref) => batch.delete(ref));
+      await batch.commit();
+    }
+  }
+
+  // Hours that members earned through approved completion requests.
+  // Kept separate from the main update so a permission problem here
+  // (only the event owner or a superadmin can delete requests) doesn't block unticking.
+  async function removeApprovedRequests(taskId) {
+    try {
+      const constraints = [
+        where("eventId", "==", String(eventId)),
+        where("status", "==", "approved"),
+      ];
+      if (taskId) constraints.push(where("todoId", "==", String(taskId)));
+      const snapshot = await getDocs(query(collection(db, "completionRequests"), ...constraints));
+      await deleteRefs(snapshot.docs.map((item) => item.ref));
+    } catch (error) {
+      console.error("Remove approved requests:", error?.code, error?.message);
+      showToast(`Task updated, but some member-submitted hours could not be removed (${error?.code || "unknown"})`);
+    }
+  }
+
+  // Saves a task change. If the task goes from done to not done, its logged hours are
+  // deleted in the same batch, so the task update and the hours removal succeed or fail together.
+  async function applyTaskUpdate(task, taskUpdate) {
+    const wasDone = taskIsDone(normalizeTask(task));
+    const reopening = wasDone && !taskUpdate.done;
+    const batch = writeBatch(db);
+    batch.update(doc(db, "events", eventId, "tasks", task.id), taskUpdate);
+
+    if (reopening) {
+      const logs = await getDocs(
+        query(
+          collection(db, "workLogs"),
+          where("eventId", "==", String(eventId)),
+          where("taskId", "==", String(task.id)),
+        ),
+      );
+      logs.docs.forEach((log) => batch.delete(log.ref));
+    }
+
+    await batch.commit();
+
+    if (reopening) {
+      await removeApprovedRequests(task.id);
+    }
+  }
+
+  // Removes every hour logged against this event's tasks (used when reopening the event)
+  async function removeAllTaskHours() {
+    const logs = await getDocs(query(collection(db, "workLogs"), where("eventId", "==", String(eventId))));
+    await deleteRefs(logs.docs.map((log) => log.ref));
+    await removeApprovedRequests(null);
+  }
+
+  // ---------- Task modal ----------
+
   function openAddTaskModal() {
     setTaskModalMode("add");
     setEditingTask(null);
@@ -319,7 +395,10 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
           return;
         }
 
-        await updateDoc(doc(db, "events", eventId, "tasks", editingTask.id), taskPayload);
+        // Editing must not change completion status (that would leave hours behind),
+        // so "done" is left out of the update.
+        const { done: _ignored, ...editPayload } = taskPayload;
+        await updateDoc(doc(db, "events", eventId, "tasks", editingTask.id), editPayload);
         showToast("Task updated");
       } else {
         await addDoc(collection(db, "events", eventId, "tasks"), {
@@ -356,6 +435,8 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
     }
   }
 
+  // ---------- Toggles ----------
+
   async function handleToggleTask(task) {
     if (readOnly || !task?.id) return;
 
@@ -365,15 +446,11 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
         setHoursTask({ task, nextTask });
         return;
       }
-      const taskUpdate = {
-        subtasks: Array.isArray(nextTask.subtasks) ? nextTask.subtasks.map((subtask) => ({
-          id: String(subtask.id ?? "").trim() || crypto.randomUUID(),
-          title: String(subtask.title ?? "").trim(),
-          done: Boolean(subtask.done),
-        })) : [],
+      await applyTaskUpdate(task, {
+        subtasks: cleanSubtasks(nextTask.subtasks),
         done: Boolean(nextTask.done),
-      };
-      await updateDoc(doc(db, "events", eventId, "tasks", task.id), taskUpdate);
+      });
+      if (!nextTask.done) showToast("Task reopened and hours removed");
     } catch (error) {
       console.error("Toggle task error:", error?.code, error?.message);
       showToast(`Couldn't update the task (${error?.code || "unknown"})`);
@@ -389,15 +466,12 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
         setHoursTask({ task, nextTask });
         return;
       }
-      const taskUpdate = {
-        subtasks: Array.isArray(nextTask.subtasks) ? nextTask.subtasks.map((subtask) => ({
-          id: String(subtask.id ?? "").trim() || crypto.randomUUID(),
-          title: String(subtask.title ?? "").trim(),
-          done: Boolean(subtask.done),
-        })) : [],
+      const wasDone = taskIsDone(normalizeTask(task));
+      await applyTaskUpdate(task, {
+        subtasks: cleanSubtasks(nextTask.subtasks),
         done: Boolean(nextTask.done),
-      };
-      await updateDoc(doc(db, "events", eventId, "tasks", task.id), taskUpdate);
+      });
+      if (wasDone && !nextTask.done) showToast("Task reopened and hours removed");
     } catch (error) {
       console.error("Toggle subtask error:", error?.code, error?.message);
       showToast(`Couldn't update the subtask (${error?.code || "unknown"})`);
@@ -450,20 +524,16 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
   }
 
   async function handleAddSubtask(task, value) {
-    const trimmedValue = String(value || "").trim();
-    if (!trimmedValue || readOnly) return;
+    const title = String(value || "").trim();
+    if (!title || readOnly || !task?.id) return;
 
     try {
-      const nextTask = addSubtask(task, trimmedValue);
-      const taskUpdate = {
-        subtasks: Array.isArray(nextTask.subtasks) ? nextTask.subtasks.map((subtask) => ({
-          id: String(subtask.id ?? "").trim() || crypto.randomUUID(),
-          title: String(subtask.title ?? "").trim(),
-          done: Boolean(subtask.done),
-        })) : [],
-        done: Boolean(nextTask.done),
-      };
-      await updateDoc(doc(db, "events", eventId, "tasks", task.id), taskUpdate);
+      // A new, unfinished subtask means the task is no longer complete.
+      // If it was done, applyTaskUpdate also removes its logged hours.
+      await applyTaskUpdate(task, {
+        subtasks: [...cleanSubtasks(task.subtasks), { id: crypto.randomUUID(), title, done: false }],
+        done: false,
+      });
       showToast("Subtask added");
     } catch (error) {
       console.error("Add subtask error:", error?.code, error?.message);
@@ -479,14 +549,10 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
       await updateDoc(doc(db, "events", eventId), eventPatch);
 
       for (const task of tasks) {
-        const safeSubtasks = Array.isArray(task.subtasks)
-          ? task.subtasks.map((subtask) => ({
-              id: String(subtask?.id ?? "").trim() || crypto.randomUUID(),
-              title: String(subtask?.title ?? "").trim(),
-              done: Boolean(subtask?.done),
-            }))
-          : [];
-        await updateDoc(doc(db, "events", eventId, "tasks", task.id), { subtasks: safeSubtasks, done: true });
+        await updateDoc(doc(db, "events", eventId, "tasks", task.id), {
+          subtasks: cleanSubtasks(task.subtasks),
+          done: true,
+        });
       }
 
       showToast("Event marked complete");
@@ -504,17 +570,16 @@ export default function EventTodo({ readOnly: forcedReadOnly = false }) {
       await updateDoc(doc(db, "events", eventId), eventPatch);
 
       for (const task of tasks) {
-        const safeSubtasks = Array.isArray(task.subtasks)
-          ? task.subtasks.map((subtask) => ({
-              id: String(subtask?.id ?? "").trim() || crypto.randomUUID(),
-              title: String(subtask?.title ?? "").trim(),
-              done: Boolean(subtask?.done),
-            }))
-          : [];
-        await updateDoc(doc(db, "events", eventId, "tasks", task.id), { subtasks: safeSubtasks, done: false });
+        await updateDoc(doc(db, "events", eventId, "tasks", task.id), {
+          subtasks: cleanSubtasks(task.subtasks),
+          done: false,
+        });
       }
 
-      showToast("Event reopened");
+      // Every task is open again, so the hours logged against them go too
+      await removeAllTaskHours();
+
+      showToast("Event reopened and task hours removed");
     } catch (error) {
       console.error("Reopen event error:", error?.code, error?.message);
       showToast(`Could not reopen the event (${error?.code || "unknown"})`);
