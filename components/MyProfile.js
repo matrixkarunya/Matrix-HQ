@@ -108,6 +108,7 @@ function formFromProfile(profile) {
 }
 
 function displayValue(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
   return textValue(value).trim() || "Not added";
 }
 
