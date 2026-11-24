@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import {
+  Briefcase,
   CalendarDays,
   ChevronRight,
   ClipboardCheck,
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { href: "/admin/events", label: "Events", icon: CalendarDays },
   { href: "/admin/meetings", label: "Meetings", icon: Clock3 },
   { href: "/admin/requests", label: "Requests", icon: Inbox },
+  { href: "/admin/works", label: "Works", icon: Briefcase },
   { href: "/admin/todo", label: "My todo", short: "Todo", icon: ListTodo },
   { href: "/admin/attendance", label: "Attendance", short: "Attend", icon: ClipboardCheck },
   { href: "/admin/my-profile", label: "Profile", icon: User },
@@ -203,7 +205,7 @@ export default function AdminShell({ children }) {
                       </span>
                       <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.label}</span>
                       <ChevronRight className="size-4 shrink-0 text-white/40" aria-hidden="true" />
-                    </Link>
+                                        </Link>
                   </li>
                 );
               })}

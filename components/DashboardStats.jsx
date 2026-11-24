@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { ArrowUpRight, CalendarDays, Clock3, Inbox, ShieldCheck, Users } from "lucide-react";
+import SemesterSelect from "@/components/SemesterSelect";
 import { formatMinutes } from "@/lib/hours";
 import useDashboardStats from "@/lib/useDashboardStats";
-import SemesterSelect from "@/components/SemesterSelect";
+
 const GLASS = "rounded-2xl border border-white/10 bg-white/[0.06] shadow-lg shadow-black/20 backdrop-blur-xl";
 
 const ICONS = {
@@ -90,16 +91,13 @@ function HoursCard({ stats, failed, className = "" }) {
 
   return (
     <section className={`${GLASS} p-5 sm:p-6 ${className}`} aria-label="Hours">
-      <div className="mb-3 flex justify-end">
-  <SemesterSelect />
-</div>
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-xs font-medium uppercase tracking-[.16em] text-white/50">Total hours</p>
           <p className="mt-2 text-4xl font-bold tracking-tight lg:text-5xl">{dash ? "—" : formatMinutes(sum)}</p>
         </div>
         <span className="mt-0.5 shrink-0 whitespace-nowrap rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/60">
-          events + meetings
+          events + works + meetings
         </span>
       </div>
 
@@ -151,8 +149,8 @@ export default function DashboardStats({ role, email }) {
     if (type === "events") return Boolean(stats.sourceErrors.events);
     if (type === "meetings" || type === "meetingHours") return Boolean(stats.sourceErrors.meetings);
     if (type === "pending") return Object.keys(stats.sourceErrors).some((source) => source.startsWith("pending requests"));
-    if (["working", "nonWorking"].includes(type)) return Boolean(stats.sourceErrors.events);
-    if (type === "total") return Boolean(stats.sourceErrors.events || stats.sourceErrors.meetings);
+    if (["working", "nonWorking"].includes(type)) return Boolean(stats.sourceErrors.events || stats.sourceErrors.works);
+    if (type === "total") return Boolean(stats.sourceErrors.events || stats.sourceErrors.meetings || stats.sourceErrors.works);
     return false;
   };
   const show = (type, value) =>
@@ -169,6 +167,10 @@ export default function DashboardStats({ role, email }) {
 
   return (
     <section aria-label="Organisation statistics" aria-busy={stats.loading ? "true" : undefined} className="mt-6 lg:mt-8">
+      <div className="mb-3 flex justify-end">
+        <SemesterSelect />
+      </div>
+
       {stats.error ? (
         <p role="alert" className="mb-3 rounded-xl border border-red-300/20 bg-red-400/10 px-4 py-3 text-xs text-red-100 backdrop-blur-md">
           {stats.error}

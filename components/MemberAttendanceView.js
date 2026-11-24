@@ -24,7 +24,9 @@ function timeRange(row) {
 }
 
 function rowKey(row) {
-  return row.meetingId ? `meeting-${row.meetingId}` : `event-${row.eventId}`;
+  if (row.workId) return `work-${row.workId}`;
+  if (row.meetingId) return `meeting-${row.meetingId}`;
+  return `event-${row.eventId}`;
 }
 
 function AttendanceContent() {
@@ -78,8 +80,8 @@ function AttendanceContent() {
         attendanceCaption={combinedAttendancePercentage === null ? "" : `${combinedAttendanceCount} of ${combinedAttendanceRecordedCount} sessions`}
       />
       <p className="mt-2 text-xs text-white/40">
-        Hours include the sessions you attended, your approved task hours and meetings you attended, for the selected
-        semester. Attendance percentage is based on your records.
+        Hours include the events you attended, your approved task hours and works you took part in, plus meetings you
+        attended, for the selected semester. Attendance percentage is based on events and meetings only.
       </p>
 
       {loading ? (
@@ -128,7 +130,7 @@ function AttendanceContent() {
                     <td className="whitespace-nowrap px-5 py-3.5 text-white/70">{timeRange(row)}</td>
                     <td className="px-5 py-3.5 text-white/70">{row.type === "Meeting" ? "—" : formatMinutes(row.workingMinutes)}</td>
                     <td className="px-5 py-3.5 text-white/70">{row.type === "Meeting" ? "—" : formatMinutes(row.nonWorkingMinutes)}</td>
-                    <td className="px-5 py-3.5 text-white/70">{row.type === "Event" ? "—" : formatMinutes(row.meetingMinutes)}</td>
+                    <td className="px-5 py-3.5 text-white/70">{row.type === "Meeting" ? formatMinutes(row.meetingMinutes) : "—"}</td>
                     <td className="px-5 py-3.5 font-semibold">{row.totalMinutes === null ? "—" : formatMinutes(row.totalMinutes)}</td>
                   </tr>
                 ))}
@@ -156,7 +158,7 @@ function AttendanceContent() {
                   {[
                     { label: "Working", value: row.type === "Meeting" ? null : row.workingMinutes },
                     { label: "Non-working", value: row.type === "Meeting" ? null : row.nonWorkingMinutes },
-                    { label: "Meeting", value: row.type === "Event" ? null : row.meetingMinutes },
+                    { label: "Meeting", value: row.type === "Meeting" ? row.meetingMinutes : null },
                     { label: "Total", value: row.totalMinutes },
                   ].map((item) => (
                     <div key={item.label} className="rounded-xl border border-white/10 bg-violet-500/10 px-2 py-2 text-center">
