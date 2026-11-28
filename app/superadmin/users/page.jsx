@@ -15,10 +15,12 @@ import {
   Pencil,
   Plus,
   Search,
+  Upload,
   UserCheck,
   UserX,
   Users,
 } from "lucide-react";
+import BulkAddUsersModal from "@/components/BulkAddUsersModal";
 import RoleGuard from "@/components/RoleGuard";
 import { useAuth } from "@/context/AuthContext";
 import { ASSIGNABLE_ROLES } from "@/lib/config";
@@ -31,6 +33,8 @@ const GLASS =
 
 const PRIMARY =
   "!min-h-0 inline-flex items-center justify-center gap-2 whitespace-nowrap !rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-neutral-900 transition hover:bg-neutral-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950 disabled:cursor-not-allowed disabled:opacity-60";
+const SECONDARY =
+  "!min-h-0 inline-flex items-center justify-center gap-2 whitespace-nowrap !rounded-full border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white/85 transition hover:bg-white/15 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:cursor-not-allowed disabled:opacity-60";
 const GHOST =
   "!min-h-0 inline-flex items-center justify-center gap-1.5 whitespace-nowrap !rounded-full border border-white/15 bg-white/5 px-3.5 py-2 text-xs font-semibold text-white/85 transition hover:bg-white/15 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:cursor-not-allowed disabled:opacity-60";
 const DESTRUCTIVE =
@@ -133,6 +137,7 @@ function ManageUsers() {
   const [usersLoading, setUsersLoading] = useState(true);
   const [usersError, setUsersError] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");
   const [designation, setDesignation] = useState("");
@@ -196,6 +201,12 @@ function ManageUsers() {
     [],
   );
 
+  // Used by the bulk add modal to skip people who already exist
+  const existingEmails = useMemo(
+    () => new Set(users.map((listedUser) => normalizeEmail(listedUser.email))),
+    [users],
+  );
+
   const counts = useMemo(() => {
     const result = { all: users.length, active: 0, pending: 0, inactive: 0 };
     users.forEach((listedUser) => {
@@ -220,6 +231,12 @@ function ManageUsers() {
   const safePage = Math.min(page, totalPages);
   const pageStart = (safePage - 1) * PAGE_SIZE;
   const pagedUsers = filteredUsers.slice(pageStart, pageStart + PAGE_SIZE);
+
+  function showToast(message) {
+    setToast(message);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(""), 2500);
+  }
 
   function openModal() {
     setEmail("");
@@ -317,9 +334,7 @@ function ManageUsers() {
       setEmail("");
       setRole("member");
       setDesignation("");
-      setToast("User added");
-      clearTimeout(toastTimer.current);
-      toastTimer.current = setTimeout(() => setToast(""), 2500);
+      showToast("User added");
     } catch (error) {
       console.error("Add user:", error?.code, error?.message);
       setFormError(`Could not add the user (${error?.code || "unknown"}).`);
@@ -395,9 +410,7 @@ function ManageUsers() {
       }
 
       await batch.commit();
-      setToast("User updated");
-      clearTimeout(toastTimer.current);
-      toastTimer.current = setTimeout(() => setToast(""), 2500);
+      showToast("User updated");
       closeEditModal();
     } catch (error) {
       console.error(error);
@@ -443,9 +456,7 @@ function ManageUsers() {
       });
 
       await batch.commit();
-      setToast(isInactive ? "User reactivated" : "User marked inactive");
-      clearTimeout(toastTimer.current);
-      toastTimer.current = setTimeout(() => setToast(""), 2500);
+      showToast(isInactive ? "User reactivated" : "User marked inactive");
       closeInactiveModal();
     } catch (error) {
       console.error(error);
@@ -511,11 +522,18 @@ function ManageUsers() {
               : `${counts.all} ${counts.all === 1 ? "person" : "people"} · add people, change roles and control access.`}
           </p>
         </div>
-        <button type="button" onClick={openModal} className={`${PRIMARY} shrink-0`}>
-          <Plus className="size-4" aria-hidden="true" />
-          <span className="hidden sm:inline">Add new user</span>
-          <span className="sm:hidden">Add</span>
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button type="button" onClick={() => setBulkOpen(true)} className={SECONDARY}>
+            <Upload className="size-4" aria-hidden="true" />
+            <span className="hidden sm:inline">Bulk add</span>
+            <span className="sr-only sm:hidden">Bulk add</span>
+          </button>
+          <button type="button" onClick={openModal} className={PRIMARY}>
+            <Plus className="size-4" aria-hidden="true" />
+            <span className="hidden sm:inline">Add new user</span>
+            <span className="sm:hidden">Add</span>
+          </button>
+        </div>
       </div>
 
       {usersError ? (
@@ -525,114 +543,115 @@ function ManageUsers() {
       ) : null}
 
       {/* Filters */}
-<div className="mt-6 space-y-3 lg:space-y-0">
-  {/* Mobile and tablet: full-width search, then two dropdowns */}
-  <div className="space-y-3 lg:hidden">
-    <div className="relative">
-      <Search
-        className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-white/40"
-        aria-hidden="true"
-      />
-      <input
-        type="search"
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-        placeholder="Search name, email or role"
-        aria-label="Search users"
-        className={`${INPUT} !rounded-full !pl-10`}
-      />
-    </div>
-    <div className="grid grid-cols-2 gap-2">
-      <select
-        value={statusFilter}
-        onChange={(event) => setStatusFilter(event.target.value)}
-        aria-label="Filter by status"
-        className={`${INPUT} !rounded-full`}
-      >
-        {FILTERS.map((item) => (
-          <option key={item.id} value={item.id} className="bg-neutral-900 text-white">
-            {item.id === "all" ? "All status" : item.label} ({counts[item.id]})
-          </option>
-        ))}
-      </select>
-      <select
-        value={roleFilter}
-        onChange={(event) => setRoleFilter(event.target.value)}
-        aria-label="Filter by role"
-        className={`${INPUT} !rounded-full capitalize`}
-      >
-        {roleOptions.map((option) => (
-          <option key={option} value={option} className="bg-neutral-900 capitalize text-white">
-            {option === "all" ? "All roles" : option}
-          </option>
-        ))}
-      </select>
-    </div>
-  </div>
-
-  {/* Desktop: status tabs on the left, search and role on the right */}
-  <div className="hidden items-center justify-between gap-3 lg:flex">
-    <div
-      role="tablist"
-      aria-label="Filter users by status"
-      className="flex w-fit items-center gap-1 rounded-full border border-white/10 bg-white/5 p-1 backdrop-blur-md"
-    >
-      {FILTERS.map((item) => {
-        const selected = statusFilter === item.id;
-        return (
-          <button
-            key={item.id}
-            type="button"
-            role="tab"
-            aria-selected={selected}
-            onClick={() => setStatusFilter(item.id)}
-            className={`!min-h-0 flex items-center justify-center gap-2 whitespace-nowrap !rounded-full px-4 py-2 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${
-              selected ? "bg-white/15 text-white" : "text-white/55 hover:text-white"
-            }`}
-          >
-            {item.label}
-            <span
-              className={`rounded-full px-2 py-0.5 text-[11px] ${
-                selected ? "bg-white/20 text-white" : "bg-white/10 text-white/60"
-              }`}
+      <div className="mt-6 space-y-3 lg:space-y-0">
+        {/* Mobile and tablet: full-width search, then two dropdowns */}
+        <div className="space-y-3 lg:hidden">
+          <div className="relative">
+            <Search
+              className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-white/40"
+              aria-hidden="true"
+            />
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search name, email or role"
+              aria-label="Search users"
+              className={`${INPUT} !rounded-full !pl-10`}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              aria-label="Filter by status"
+              className={`${INPUT} !rounded-full`}
             >
-              {counts[item.id]}
-            </span>
-          </button>
-        );
-      })}
-    </div>
+              {FILTERS.map((item) => (
+                <option key={item.id} value={item.id} className="bg-neutral-900 text-white">
+                  {item.id === "all" ? "All status" : item.label} ({counts[item.id]})
+                </option>
+              ))}
+            </select>
+            <select
+              value={roleFilter}
+              onChange={(event) => setRoleFilter(event.target.value)}
+              aria-label="Filter by role"
+              className={`${INPUT} !rounded-full capitalize`}
+            >
+              {roleOptions.map((option) => (
+                <option key={option} value={option} className="bg-neutral-900 capitalize text-white">
+                  {option === "all" ? "All roles" : option}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
 
-    <div className="flex gap-2">
-      <div className="relative w-64">
-        <Search
-          className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-white/40"
-          aria-hidden="true"
-        />
-        <input
-          type="search"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search name, email or role"
-          aria-label="Search users"
-          className={`${INPUT} !rounded-full !pl-10`}
-        />
+        {/* Desktop: status tabs on the left, search and role on the right */}
+        <div className="hidden items-center justify-between gap-3 lg:flex">
+          <div
+            role="tablist"
+            aria-label="Filter users by status"
+            className="flex w-fit items-center gap-1 rounded-full border border-white/10 bg-white/5 p-1 backdrop-blur-md"
+          >
+            {FILTERS.map((item) => {
+              const selected = statusFilter === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => setStatusFilter(item.id)}
+                  className={`!min-h-0 flex items-center justify-center gap-2 whitespace-nowrap !rounded-full px-4 py-2 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${
+                    selected ? "bg-white/15 text-white" : "text-white/55 hover:text-white"
+                  }`}
+                >
+                  {item.label}
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] ${
+                      selected ? "bg-white/20 text-white" : "bg-white/10 text-white/60"
+                    }`}
+                  >
+                    {counts[item.id]}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex gap-2">
+            <div className="relative w-64">
+              <Search
+                className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-white/40"
+                aria-hidden="true"
+              />
+              <input
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search name, email or role"
+                aria-label="Search users"
+                className={`${INPUT} !rounded-full !pl-10`}
+              />
+            </div>
+            <select
+              value={roleFilter}
+              onChange={(event) => setRoleFilter(event.target.value)}
+              aria-label="Filter by role"
+              className={`${INPUT} !w-auto shrink-0 !rounded-full capitalize`}
+            >
+              {roleOptions.map((option) => (
+                <option key={option} value={option} className="bg-neutral-900 capitalize text-white">
+                  {option === "all" ? "All roles" : option}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
       </div>
-      <select
-        value={roleFilter}
-        onChange={(event) => setRoleFilter(event.target.value)}
-        aria-label="Filter by role"
-        className={`${INPUT} !w-auto shrink-0 !rounded-full capitalize`}
-      >
-        {roleOptions.map((option) => (
-          <option key={option} value={option} className="bg-neutral-900 capitalize text-white">
-            {option === "all" ? "All roles" : option}
-          </option>
-        ))}
-      </select>
-    </div>
-  </div>
-</div>
+
       <div className="mt-4 sm:mt-6">
         {usersLoading ? (
           <div className={`${GLASS} divide-y divide-white/10`} aria-busy="true">
@@ -652,7 +671,7 @@ function ManageUsers() {
             </div>
             <p className="text-sm text-white/40">
               {users.length === 0
-                ? "No users yet. Add the first one with the button above."
+                ? "No users yet. Add the first one, or use Bulk add to import a list."
                 : "No users match this view."}
             </p>
           </div>
@@ -769,6 +788,14 @@ function ManageUsers() {
           {toast}
         </div>
       ) : null}
+
+      <BulkAddUsersModal
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        existingEmails={existingEmails}
+        currentUserEmail={currentUserEmail}
+        onDone={(count) => showToast(`${count} ${count === 1 ? "user" : "users"} added`)}
+      />
 
       {modalOpen ? (
         <ModalShell labelledBy="add-user-title" onBackdrop={closeModal} maxWidth="max-w-md">
